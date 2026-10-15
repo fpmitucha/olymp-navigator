@@ -18,7 +18,7 @@ from pathlib import Path
 
 from app.catalog import Catalog, CatalogOlympiad
 
-BENEFIT_TYPES = {"bvi": "БВИ", "score100": "100 баллов"}
+BENEFIT_TYPES = {"bvi": "БВИ", "score100": "100 баллов ЕГЭ", "dvi100": "100 баллов за ДВИ"}
 DIPLOMAS = {"winner": "победителям", "prize": "призёрам", "any": "победителям и призёрам"}
 DOCUMENT_STATUSES = {"draft": "проект", "approved": "утверждено"}
 VSOSH = "ВсОШ"
@@ -32,7 +32,7 @@ class BenefitsError(ValueError):
 class Rule:
     olympiad_query: str            # как записано в файле — для сообщений об ошибках
     olympiad: CatalogOlympiad
-    benefit: str                   # bvi | score100
+    benefit: str                   # bvi | score100 (ЕГЭ) | dvi100 (доп. вступительное испытание, МГУ)
     diploma: str                   # winner | prize | any
     profiles: list[str] | None     # None — любой профиль (или вуз ещё не уточнил)
     levels: list[int] | None       # None — любой уровень
@@ -42,6 +42,7 @@ class Rule:
     grades: list[int] | None       # за какой класс засчитывается диплом
     diploma_since: int | None      # диплом не раньше этого года
     note: str | None
+    score_for: str | None = None   # за что ставят 100 баллов: «ЕГЭ по физике», «ДВИ по математике»
 
 
 @dataclass
@@ -235,7 +236,8 @@ def parse_file(data: dict, catalog: Catalog, name: str = "") -> UniversityBenefi
             confirm_subject=merged.get("confirm_subject"),
             grades=_list_of(merged.get("grades"), int, where, errors),
             diploma_since=merged.get("diploma_since"),
-            note=raw.get("note"),
+            note=merged.get("note"),
+            score_for=merged.get("score_for"),
         ))
     if not rules and not errors:
         errors.append(f"{name}: нет ни одного правила")

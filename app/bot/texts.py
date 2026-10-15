@@ -422,7 +422,11 @@ def reminder(r: Reminder, o: CatalogOlympiad) -> str:
 # Льготы вузов
 # ---------------------------------------------------------------------------
 
-BENEFIT_ICONS = {"bvi": "🏅", "score100": "💯"}
+BENEFIT_ICONS = {"bvi": "🏅", "score100": "💯", "dvi100": "📝"}
+
+
+def _benefit_order(benefit: str) -> int:
+    return list(BENEFIT_TYPES).index(benefit)
 
 
 def _rule_line(r: Rule) -> str:
@@ -445,8 +449,8 @@ def _rule_line(r: Rule) -> str:
 def _conditions(r: Rule) -> str | None:
     parts = []
     if r.confirm_min_score:
-        subject = f" по {r.confirm_subject}" if r.confirm_subject else " по предмету профиля"
-        parts.append(f"ЕГЭ от {r.confirm_min_score}{subject}")
+        subject = r.confirm_subject or "предмет профиля"
+        parts.append(f"ЕГЭ от {r.confirm_min_score}: {subject}")
     elif r.olympiad.is_vsosh:
         parts.append("без условия по ЕГЭ")
     if r.grades:
@@ -475,11 +479,15 @@ def _summary(rules: list[Rule]) -> list[str]:
             elif by_profile.get(profile, set()) is not None:
                 by_profile.setdefault(profile, set()).update(r.programs)
     lines = []
-    for (benefit, diploma) in sorted(groups, key=lambda k: (k[0] != "bvi", k[1] != "any")):
+    for (benefit, diploma) in sorted(groups, key=lambda k: (_benefit_order(k[0]), k[1] != "any")):
         parts = []
-        for profile, programs in sorted(groups[(benefit, diploma)].items()):
+        items = sorted(groups[(benefit, diploma)].items())
+        compact = len(items) > 4  # много профилей — только число программ, иначе сводка не читается
+        for profile, programs in items:
             label = escape(profile)
-            if programs:
+            if programs and compact:
+                label += f" ({len(programs)})"
+            elif programs:
                 label += f" ({_plural(len(programs), 'программа', 'программы', 'программ')})" if len(programs) > 1 \
                     else f" ({escape(next(iter(programs)))})"
             parts.append(label)
@@ -526,10 +534,10 @@ def olympiad_university_benefits(o: CatalogOlympiad, u: UniversityBenefits, rule
     """Все правила одного вуза для олимпиады — со списками программ."""
     name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
     lines = [f"🎓 <b>{escape(u.university)}: «{name}»</b>", f"<i>{u.status_label(admission_year)}</i>", ""]
-    order = sorted(rules, key=lambda r: (r.benefit != "bvi", (r.profiles or [""])[0], r.diploma != "any"))
+    order = sorted(rules, key=lambda r: (_benefit_order(r.benefit), (r.profiles or [""])[0], r.diploma != "any"))
     for r in order:
         lines.append(_rule_line(r).split("\n")[0])
-        extra = [c for c in (_conditions(r), r.note) if c]
+        extra = [c for c in (f"100 баллов: {r.score_for}" if r.score_for else None, _conditions(r), r.note) if c]
         if extra:
             lines.append(f"      <i>{escape(' · '.join(extra))}</i>")
         if r.programs:
@@ -566,7 +574,7 @@ def university_benefits(u: UniversityBenefits, admission_year: int) -> str:
         groups.setdefault((r.benefit, r.diploma), [])
         if label not in groups[(r.benefit, r.diploma)]:
             groups[(r.benefit, r.diploma)].append(label)
-    order = sorted(groups, key=lambda k: (k[0] != "bvi", k[1]))
+    order = sorted(groups, key=lambda k: (_benefit_order(k[0]), k[1]))
     for benefit, diploma in order:
         names = sorted(groups[(benefit, diploma)], key=sort_key)
         lines.append(f"{BENEFIT_ICONS[benefit]} <b>{BENEFIT_TYPES[benefit]} — {DIPLOMAS[diploma]}</b> ({len(names)}):")

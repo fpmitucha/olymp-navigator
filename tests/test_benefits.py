@@ -100,11 +100,11 @@ class TextsTest(unittest.TestCase):
         text = texts.olympiad_benefits(fiztech, [(self.u, rules)], 2027)
         self.assertIn("<b>Тестовый вуз</b> — <i>приём 2027</i>", text)
         self.assertIn("🏅 БВИ — победителям: математика", text)
-        self.assertIn("💯 100 баллов — призёрам: любой профиль", text)
+        self.assertIn("💯 100 баллов ЕГЭ — призёрам: любой профиль", text)
         self.assertIn("ЕГЭ от 75 · диплом за 11 класс", text)
         detail = texts.olympiad_university_benefits(fiztech, self.u, rules, 2027)
         self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", detail)
-        self.assertIn("ЕГЭ от 75 по предмету профиля · диплом за 11 класс", detail)
+        self.assertIn("ЕГЭ от 75: предмет профиля · диплом за 11 класс", detail)
         self.assertIn("направления — по профилю олимпиады", detail)
 
     def test_summary_counts_programs(self):
@@ -122,7 +122,7 @@ class TextsTest(unittest.TestCase):
         fiztech = u.rules[0].olympiad
         text = texts.olympiad_benefits(fiztech, [(u, u.rules)], 2027)
         self.assertIn("🏅 БВИ — победителям и призёрам: математика (2 программы)", text)
-        self.assertIn("💯 100 баллов — победителям: физика (03.03.02 Физика)", text)
+        self.assertIn("💯 100 баллов ЕГЭ — победителям: физика (03.03.02 Физика)", text)
         self.assertIn("ЕГЭ от 75 до 85 — смотря по программе · часть льгот — и за 10 класс", text)
 
     def test_empty_and_vsosh(self):
@@ -135,7 +135,7 @@ class TextsTest(unittest.TestCase):
     def test_university_view(self):
         text = texts.university_benefits(self.u, 2027)
         self.assertIn("🏅 <b>БВИ — победителям</b> (1):\nФизтех (математика)", text)
-        self.assertIn("💯 <b>100 баллов — призёрам</b> (1):\nФизтех", text)
+        self.assertIn("💯 <b>100 баллов ЕГЭ — призёрам</b> (1):\nФизтех", text)
         self.assertIn('href="https://example.edu/olymp"', text)
         old = parse_file(university(admission_year=2026), self.c)
         self.assertIn("это данные прошлого года", texts.university_benefits(old, 2027))

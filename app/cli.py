@@ -127,9 +127,14 @@ def cmd_benefits_check(args: argparse.Namespace) -> int:
     catalog = _catalog()
     benefits = _benefits(catalog)
     for u in benefits.universities:
-        bvi = sum(r.benefit == "bvi" for r in u.rules)
+        from collections import Counter
+
+        from app.benefits import BENEFIT_TYPES
+
+        counts = Counter(r.benefit for r in u.rules)
+        kinds = ", ".join(f"{BENEFIT_TYPES[k]} {counts[k]}" for k in BENEFIT_TYPES if counts[k])
         print(f"✓ {u.file}: {u.university}, приём {u.admission_year}, {u.document_status}, "
-              f"правил {len(u.rules)} (БВИ {bvi}, 100 баллов {len(u.rules) - bvi})")
+              f"правил {len(u.rules)} ({kinds})")
     return 0
 
 
@@ -179,6 +184,50 @@ def cmd_benefits_import_hse(args: argparse.Namespace) -> int:
         print(f"\nНе сопоставлено ({len(problems)}) — эти правила не сохранены:")
         for p in problems:
             print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_msu(args: argparse.Namespace) -> int:
+    import json
+    import re
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.msu_benefits import expand_wildcards, parse_msu_pdf
+
+    table = parse_msu_pdf(args.source)
+    catalog = _catalog()
+    rsr_year = m.group(1) if (m := re.search(r"на (20\d\d/\d\d) учебный год", table.title)) else args.rsr_year
+    expanded, wildcard_problems = expand_wildcards(table.rules, catalog, rsr_year)
+    rules, problems = resolve_import(expanded, catalog)
+    year = int(m.group(1)) if (m := re.search(r"в (20\d\d) году", table.title)) else args.year
+    doc = {
+        "university": "МГУ",
+        "full_name": "Московский государственный университет имени М.В. Ломоносова",
+        "city": "Москва",
+        "admission_year": year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": table.title or "Особые права победителям и призёрам олимпиад, МГУ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Льгота — по профилю олимпиады; ЕГЭ по предмету подтверждения не ниже 75 баллов.",
+            "«100 баллов за ДВИ» — максимальный балл за дополнительное вступительное испытание МГУ.",
+            f"«Любая олимпиада перечня» — по перечню {rsr_year} учебного года.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nфакультетов: {table.faculties}, строк: {table.rows}, правил: {len(table.rules)}, "
+          f"после раскрытия «*»: {len(expanded)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", wildcard_problems + problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
     return 0
 
 
@@ -359,6 +408,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--year", type=int, default=2026, help="год приёма, если его нет в заголовке таблицы")
     p.add_argument("--page", default="https://www.hse.ru/docs/1130197982.html", help="страница документа")
     p.set_defaults(func=cmd_benefits_import_hse)
+    p = ben.add_parser("import-msu", help="импорт PDF особых прав МГУ (нужен pdfplumber)")
+    p.add_argument("source", help="путь к olymp_benefits.pdf")
+    p.add_argument("--out", required=True, help="например benefits/msu_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26", help="учебный год перечня для «*»")
+    p.add_argument("--url", default="https://cpk.msu.ru/files/2026/olymp_benefits.pdf")
+    p.set_defaults(func=cmd_benefits_import_msu)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")
