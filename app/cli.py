@@ -407,6 +407,48 @@ def cmd_benefits_import_sechenov(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_import_reu(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.mephi_benefits import resolve_numbers
+    from app.parsers.reu_benefits import parse_reu_pdf
+
+    table = parse_reu_pdf(args.source)
+    catalog = _catalog()
+    rsr_year = table.year.replace("/20", "/") if table.year else args.rsr_year  # 2025/2026 → 2025/26
+    rules, problems = resolve_import(resolve_numbers(table.rules, catalog, rsr_year), catalog)
+    doc = {
+        "university": "РЭУ",
+        "full_name": "Российский экономический университет имени Г.В. Плеханова",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": f"Приложение 11 к Правилам приёма РЭУ им. Г.В. Плеханова в {args.year}/{(args.year + 1) % 100} "
+                        "учебном году: перечень олимпиад и льгот",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            f"Условия для дипломов {table.year} учебного года; для дипломов прошлых лет в документе РЭУ "
+            "отдельные таблицы — условия могут отличаться.",
+            "Победителям и призёрам; для олимпиад РСОШ — ЕГЭ по подтверждающему предмету от 75 баллов.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"раздел {table.year}: строк {table.rows}, правил {len(table.rules)}, сохранено {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -613,6 +655,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default="https://www.sechenov.ru/upload/iblock/4f9/rqcqaakaep5gyyfvivy0mba980kmvrwm/"
                                     "Pravila-priema_2026_2027_BS_pril5_Perechen-olimpiad.pdf")
     p.set_defaults(func=cmd_benefits_import_sechenov)
+    p = ben.add_parser("import-reu", help="импорт PDF (приложение 11) особых прав РЭУ (нужен pdfplumber)")
+    p.add_argument("source", nargs="?", default="data/reu_pril11.pdf")
+    p.add_argument("--out", default="benefits/reu_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.add_argument("--url", default="https://www.rea.ru/mnt/sveden/document/priemDocLink/03_bak_Pravila_priema_pril_11.pdf")
+    p.set_defaults(func=cmd_benefits_import_reu)
     mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
     p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
     p.add_argument("source", nargs="?", default=mephi_url)
