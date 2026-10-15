@@ -16,9 +16,10 @@ MONTHS = ["января", "февраля", "марта", "апреля", "ма�
 
 START = (
     "👋 Привет! Я помогаю разобраться с олимпиадами из перечня РСОШ и ВсОШ.\n\n"
-    "<b>Напиши название, сокращение или предмет</b> — например, <code>Физтех</code>, "
+    "🔍 <b>Напиши название, сокращение или предмет</b> — например, <code>Физтех</code>, "
     "<code>НТО</code> или <code>информатика</code>. Можно вместе: <code>ломоносов химия</code>.\n\n"
-    "Покажу профили и уровни за последние годы, а если подпишешься — напомню о регистрации и этапах."
+    "📚 Или открой перечень по уровням — кнопки ниже.\n\n"
+    "Подпишись на олимпиаду — напомню о регистрации и этапах."
 )
 
 HELP = (
@@ -102,6 +103,27 @@ def short_name(name: str, limit: int = 48) -> str:
 
 def button_name(o: CatalogOlympiad, limit: int = 50) -> str:
     return "ВсОШ" if o.is_vsosh else short_name(o.name, limit)
+
+
+def sort_key(text: str) -> str:
+    """Сортировка по алфавиту без учёта регистра, кавычек и «ё»."""
+    return re.sub(r"[«»\"]", "", text).lower().replace("ё", "е")
+
+
+def level_list(level: int, items: list, total: int, page: int, pages: int, first_number: int,
+               current_year: str) -> str:
+    """Список олимпиад уровня: items — [(олимпиада, профили этого уровня)] текущей страницы."""
+    head = f"{LEVEL_ICONS[level]} <b>{level} уровень</b> — {_count(total)}"
+    if pages > 1:
+        head += f", страница {page + 1} из {pages}"
+    lines = [head, ""]
+    for number, (o, profiles) in enumerate(items, start=first_number):
+        profiles_text = ", ".join(profiles)
+        if len(profiles_text) > 150:
+            profiles_text = profiles_text[:149].rstrip(", ") + "…"
+        lines.append(f"<b>{number}. {escape(button_name(o, 70))}</b>\n    {escape(profiles_text)}")
+    lines += ["", f"<i>Перечень {current_year}, по алфавиту. Под названием — профили {level} уровня.</i>"]
+    return "\n".join(lines)
 
 
 def level_text(level: int | None) -> str:

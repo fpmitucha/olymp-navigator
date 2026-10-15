@@ -38,18 +38,20 @@ from app.catalog import Catalog, CatalogOlympiad
 
 log = logging.getLogger(__name__)
 
-PAGE_SIZE = 8
+PAGE_SIZE = 5
 MAX_RESULTS = 200
 MAX_QUERY = 100
-EXAMPLES = ["Физтех", "ВсОШ", "информатика", "НТО"]
+LEVELS = (1, 2, 3)
 
 
 class Nav(CallbackData, prefix="n"):
     """Данные кнопок. Вся навигация — через этот класс (лимит Telegram 64 байта).
 
-    a — действие: menu, help, subs, ex (пример поиска), page, card, sub, unsub, noop
-    o — id олимпиады; q — id сохранённого запроса; p — страница результатов
-    b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "u" — подписки
+    a — действие: menu, help, subs, lvl (список уровня), vsosh, page (результаты поиска),
+        card, sub, unsub, noop
+    o — id олимпиады; q — id сохранённого запроса или номер уровня; p — страница списка
+    b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "l" — список уровня,
+        "u" — подписки
     d — 1, если карточка открыта в подробном виде
     """
 
@@ -91,12 +93,44 @@ class Views:
 
     def menu(self) -> Screen:
         kb = InlineKeyboardBuilder()
-        for i, example in enumerate(EXAMPLES):
-            kb.button(text=f"🔍 {example}", callback_data=Nav(a="ex", p=i))
+        for level in LEVELS:
+            count = len(self.level_items(level))
+            kb.button(text=f"{texts.LEVEL_ICONS[level]} {level} уровень · {count}", callback_data=Nav(a="lvl", q=level))
+        kb.button(text="🏆 ВсОШ", callback_data=Nav(a="vsosh"))
         kb.button(text="🔔 Мои подписки", callback_data=Nav(a="subs"))
         kb.button(text="ℹ️ Как пользоваться", callback_data=Nav(a="help"))
-        kb.adjust(2, 2, 1, 1)
+        kb.adjust(1)
         return texts.START, kb.as_markup()
+
+    # -- списки по уровням ------------------------------------------------------
+
+    def level_items(self, level: int) -> list[tuple[CatalogOlympiad, list[str]]]:
+        """Олимпиады, у которых в текущем перечне есть профили этого уровня, — по алфавиту."""
+        year = self.catalog.current_year
+        items = []
+        for o in self.catalog.olympiads.values():
+            if o.is_vsosh:
+                continue
+            profiles = sorted(name for name, p in o.profiles_in(year).items() if p.level == level)
+            if profiles:
+                items.append((o, profiles))
+        return sorted(items, key=lambda item: texts.sort_key(texts.button_name(item[0])))
+
+    def level_list(self, level: int, page: int) -> Screen:
+        items = self.level_items(level)
+        page, pages, chunk = paginate(items, page)
+        first = page * PAGE_SIZE + 1
+        kb = InlineKeyboardBuilder()
+        for number, (o, _) in enumerate(chunk, start=first):
+            kb.row(InlineKeyboardButton(
+                text=f"{number}. {texts.button_name(o, 45)}",
+                callback_data=Nav(a="card", o=o.id, q=level, p=page, b="l").pack()))
+        nav_row = pager_row(page, pages, lambda p: Nav(a="lvl", q=level, p=p))
+        if nav_row:
+            kb.row(*nav_row)
+        kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+        text = texts.level_list(level, chunk, len(items), page, pages, first, self.catalog.current_year)
+        return text, kb.as_markup()
 
     def help(self) -> Screen:
         kb = InlineKeyboardBuilder()
@@ -117,23 +151,15 @@ class Views:
         if query is None:
             return None
         hits = self.catalog.search(query, limit=MAX_RESULTS)
-        pages = max(1, math.ceil(len(hits) / PAGE_SIZE))
-        page = min(max(page, 0), pages - 1)
+        page, pages, chunk = paginate(hits, page)
         kb = InlineKeyboardBuilder()
-        for hit in hits[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]:
+        for hit in chunk:
             label = texts.hit_button_label(hit, self.catalog.current_year)
             kb.row(InlineKeyboardButton(
                 text=label, callback_data=Nav(a="card", o=hit.olympiad.id, q=query_id, p=page, b="s").pack()))
-        if pages > 1:
-            kb.row(
-                InlineKeyboardButton(text="◀️" if page > 0 else "·",
-                                     callback_data=Nav(a="page", q=query_id, p=page - 1).pack() if page > 0
-                                     else Nav(a="noop").pack()),
-                InlineKeyboardButton(text=f"{page + 1} / {pages}", callback_data=Nav(a="noop").pack()),
-                InlineKeyboardButton(text="▶️" if page < pages - 1 else "·",
-                                     callback_data=Nav(a="page", q=query_id, p=page + 1).pack() if page < pages - 1
-                                     else Nav(a="noop").pack()),
-            )
+        nav_row = pager_row(page, pages, lambda p: Nav(a="page", q=query_id, p=p))
+        if nav_row:
+            kb.row(*nav_row)
         kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
         text = texts.search_results(query, len(hits), page, pages, self.catalog.current_year)
         return text, kb.as_markup()
@@ -162,6 +188,8 @@ class Views:
             kb.row(*row)
         if nav.b == "s":
             back = InlineKeyboardButton(text="◀️ К результатам", callback_data=Nav(a="page", q=nav.q, p=nav.p).pack())
+        elif nav.b == "l":
+            back = InlineKeyboardButton(text=f"◀️ К {nav.q} уровню", callback_data=Nav(a="lvl", q=nav.q, p=nav.p).pack())
         elif nav.b == "u":
             back = InlineKeyboardButton(text="◀️ К подпискам", callback_data=Nav(a="subs").pack())
         else:
@@ -181,6 +209,24 @@ class Views:
             kb.button(text="🏠 Меню", callback_data=Nav(a="menu"))
             return texts.NOT_FOUND.format(query=texts.escape(query)), kb.as_markup()
         return self.results(self.storage.save_query(query), 0)
+
+
+def paginate(items: list, page: int) -> tuple[int, int, list]:
+    """(страница, всего страниц, элементы страницы). Номер страницы приводится к допустимому."""
+    pages = max(1, math.ceil(len(items) / PAGE_SIZE))
+    page = min(max(page, 0), pages - 1)
+    return page, pages, items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+
+def pager_row(page: int, pages: int, make: Callable[[int], Nav]) -> list[InlineKeyboardButton]:
+    """◀️ 2 / 7 ▶️ — листание по кругу: с последней страницы ▶️ ведёт на первую."""
+    if pages <= 1:
+        return []
+    return [
+        InlineKeyboardButton(text="◀️", callback_data=make((page - 1) % pages).pack()),
+        InlineKeyboardButton(text=f"{page + 1} / {pages}", callback_data=Nav(a="noop").pack()),
+        InlineKeyboardButton(text="▶️", callback_data=make((page + 1) % pages).pack()),
+    ]
 
 
 async def show(callback: CallbackQuery, screen: Screen) -> None:
@@ -244,8 +290,14 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date]) 
             await show(callback, views.help())
         elif nav.a == "subs":
             await show(callback, views.subs(user_id))
-        elif nav.a == "ex" and 0 <= nav.p < len(EXAMPLES):
-            await show(callback, views.search(EXAMPLES[nav.p], user_id))
+        elif nav.a == "lvl" and nav.q in LEVELS:
+            await show(callback, views.level_list(nav.q, nav.p))
+        elif nav.a == "vsosh":
+            vsosh = next((o for o in catalog.olympiads.values() if o.is_vsosh), None)
+            if vsosh is None:
+                await callback.answer("ВсОШ нет в каталоге.", show_alert=True)
+                return
+            await show(callback, views.card(vsosh, user_id, Nav(a="card", o=vsosh.id)))
         elif nav.a == "page":
             screen = views.results(nav.q, nav.p)
             if screen is None:
@@ -262,6 +314,9 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date]) 
             else:
                 await toggle_subscription(callback, o, nav)
                 return
+        else:
+            await stale_button(callback)
+            return
         await callback.answer()
 
     async def toggle_subscription(callback: CallbackQuery, o: CatalogOlympiad, nav: Nav) -> None:

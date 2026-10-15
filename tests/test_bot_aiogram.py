@@ -131,8 +131,10 @@ class BotFlowTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("перечня РСОШ", calls[0].text)
         labels = [label for label, _ in self.buttons(calls[0])]
-        self.assertEqual(labels[:2], ["🔍 Физтех", "🔍 ВсОШ"])
-        self.assertIn("🔔 Мои подписки", labels)
+        # в тестовом перечне 2026/27: 1 ур. — Физтех, Ломоносов, «Архитектура и искусство»;
+        # 2 ур. — НТО, ОММО; 3 ур. — НТО, ОММО
+        self.assertEqual(labels, ["1️⃣ 1 уровень · 3", "2️⃣ 2 уровень · 2", "3️⃣ 3 уровень · 2",
+                                  "🏆 ВсОШ", "🔔 Мои подписки", "ℹ️ Как пользоваться"])
         self.assertEqual(self.storage.stats()["users"], 1)
 
     def test_menu_navigation_edits_message(self):
@@ -140,8 +142,20 @@ class BotFlowTest(unittest.TestCase):
         self.assertIn("Как пользоваться", help_.text)
         menu = self.only_edit(self.feed(self.callback(self.button(help_, "🏠"))))
         self.assertIn("Привет", menu.text)
-        example = self.only_edit(self.feed(self.callback(self.button(menu, "🔍 Физтех"))))
-        self.assertIn("<b>Физтех</b>", example.text)
+        vsosh = self.only_edit(self.feed(self.callback(self.button(menu, "🏆 ВсОШ"))))
+        self.assertTrue(vsosh.text.startswith("<b>ВсОШ</b>"))
+
+    def test_level_list_alphabetical_and_back(self):
+        menu = self.sent(self.feed(self.message("/start")))[0]
+        level1 = self.only_edit(self.feed(self.callback(self.button(menu, "1️⃣"))))
+        self.assertIn("<b>1 уровень</b> — 3 олимпиады", level1.text)
+        names = [label for label, _ in self.buttons(level1)][:3]
+        self.assertEqual(names, ["1. Архитектура и искусство", "2. Ломоносов", "3. Физтех"])
+        self.assertIn("<b>3. Физтех</b>\n    математика, физика", level1.text)
+
+        card = self.only_edit(self.feed(self.callback(self.button(level1, "3. Физтех"))))
+        back = self.only_edit(self.feed(self.callback(self.button(card, "◀️ К 1 уровню"))))
+        self.assertEqual(back.text, level1.text)
 
     def test_unknown_command(self):
         self.assertIn("Не знаю такой команды", self.sent(self.feed(self.message("/foo")))[0].text)
@@ -170,7 +184,7 @@ class BotFlowTest(unittest.TestCase):
         back = self.only_edit(self.feed(self.callback(self.button(brief, "◀️ К результатам"))))
         self.assertEqual(back.text, results.text)
 
-    def test_pagination(self):
+    def test_pagination_cycles(self):
         import app.bot.main as bot_main
 
         old = bot_main.PAGE_SIZE
@@ -178,13 +192,29 @@ class BotFlowTest(unittest.TestCase):
         self.addCleanup(setattr, bot_main, "PAGE_SIZE", old)
         first = self.sent(self.feed(self.message("физика")))[0]
         self.assertIn("страница 1 из", first.text)
-        labels = [label for label, _ in self.buttons(first)]
-        self.assertIn("·", labels)  # на первой странице нет «назад»
+        pages = int(first.text.split("страница 1 из ")[1].split("\n")[0])
         second = self.only_edit(self.feed(self.callback(self.button(first, "▶️"))))
         self.assertIn("страница 2 из", second.text)
         self.assertNotEqual(self.buttons(second)[0], self.buttons(first)[0])
+        last = self.only_edit(self.feed(self.callback(self.button(first, "◀️"))))  # с первой — на последнюю
+        self.assertIn(f"страница {pages} из {pages}", last.text)
+        again = self.only_edit(self.feed(self.callback(self.button(last, "▶️"))))  # с последней — на первую
+        self.assertEqual(again.text, first.text)
         noop = self.feed(self.callback(self.button(second, "2 /")))
         self.assertEqual(self.edited(noop), [])
+
+    def test_level_pagination(self):
+        import app.bot.main as bot_main
+
+        old = bot_main.PAGE_SIZE
+        bot_main.PAGE_SIZE = 2
+        self.addCleanup(setattr, bot_main, "PAGE_SIZE", old)
+        page1 = self.only_edit(self.feed(self.callback(self.nav(a="lvl", q=1))))
+        page2 = self.only_edit(self.feed(self.callback(self.button(page1, "▶️"))))
+        self.assertEqual([label for label, _ in self.buttons(page2)][0], "3. Физтех")
+        card = self.only_edit(self.feed(self.callback(self.button(page2, "3. Физтех"))))
+        back = self.only_edit(self.feed(self.callback(self.button(card, "◀️ К 1 уровню"))))
+        self.assertEqual(back.text, page2.text)  # возвращает на ту же страницу
 
     def test_not_found(self):
         calls = self.sent(self.feed(self.message("абракадабра")))
@@ -230,7 +260,8 @@ class BotFlowTest(unittest.TestCase):
         self.assertEqual(self.storage.subscriptions(USER_ID), [])
 
     def test_unknown_olympiad_and_stale_buttons(self):
-        cases = (self.nav(a="card", o="deadbeef00"), self.nav(a="page", q=9999), "o:open:abc", "n:help")
+        cases = (self.nav(a="card", o="deadbeef00"), self.nav(a="page", q=9999), "o:open:abc", "n:help",
+                 self.nav(a="ex", p=0))
         for data in cases:
             calls = self.feed(self.callback(data))
             answer = next(c for c in calls if isinstance(c, AnswerCallbackQuery))
