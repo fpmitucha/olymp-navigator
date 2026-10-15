@@ -603,6 +603,48 @@ def universities_list(universities: list[UniversityBenefits], admission_year: in
     return "\n".join(lines)
 
 
+def _levels_label(levels: tuple[int, ...]) -> str:
+    if set(levels) == {1, 2, 3}:
+        return "любого уровня"
+    roman = {1: "I", 2: "II", 3: "III"}
+    return (roman[levels[0]] + (f"–{roman[levels[-1]]}" if len(levels) > 1 else "")) + " уровня"
+
+
+def _university_groups(rules: list[Rule]) -> list[str]:
+    """По каждой льготе: «любая олимпиада I уровня — профили: …; предметы: …» и список названных олимпиад
+    с их профилями, без повторов."""
+    named: dict[tuple[str, str], dict[str, set[str]]] = {}
+    wild: dict[tuple[str, str], dict[tuple[int, ...], dict[str, set[str]]]] = {}
+    for r in rules:
+        key = (r.benefit, r.diploma)
+        if r.wildcard_spec:
+            levels, kind, values = r.wildcard_spec
+            wild.setdefault(key, {}).setdefault(levels, {}).setdefault(kind, set()).update(values)
+        else:
+            label = button_name(r.olympiad, 60)
+            named.setdefault(key, {}).setdefault(label, set()).update(r.profiles or [])
+    lines = []
+    for benefit, diploma in sorted(set(named) | set(wild), key=lambda k: (_benefit_order(k[0]), k[1])):
+        olympiads = named.get((benefit, diploma), {})
+        wildcards = wild.get((benefit, diploma), {})
+        lines.append(f"{BENEFIT_ICONS[benefit]} <b>{BENEFIT_TYPES[benefit]} — {DIPLOMAS[diploma]}</b>")
+        for levels in sorted(wildcards, key=lambda lv: (len(lv), lv)):
+            parts = []
+            for kind, title in (("profile", "профили"), ("subject", "предметы")):
+                if wildcards[levels].get(kind):
+                    parts.append(f"{title}: " + ", ".join(sorted(wildcards[levels][kind])))
+            lines.append(f"• любая олимпиада {_levels_label(levels)} — " + escape("; ".join(parts)))
+        if olympiads:
+            items = []
+            for name in sorted(olympiads, key=sort_key):
+                profiles = sorted(olympiads[name])
+                shown = ", ".join(profiles[:4]) + (f" и ещё {len(profiles) - 4}" if len(profiles) > 4 else "")
+                items.append(f"{name} ({shown})" if profiles else name)
+            lines.append(f"• олимпиады ({len(items)}): " + escape("; ".join(items)))
+        lines.append("")
+    return lines
+
+
 def university_benefits(u: UniversityBenefits, admission_year: int) -> str:
     lines = [f"🎓 <b>{escape(u.university)}</b>", f"<i>{escape(u.full_name)}</i>", "",
              f"📄 {u.status_label(admission_year).capitalize()}"]
@@ -613,23 +655,7 @@ def university_benefits(u: UniversityBenefits, admission_year: int) -> str:
     if prize_bvi_affected(u.rules):
         lines.append(PRIZE_BVI_WARNING)
     lines.append("")
-    groups: dict[tuple[str, str], list[str]] = {}
-    for r in u.rules:
-        if r.wildcard:
-            label = r.wildcard
-        else:
-            label = button_name(r.olympiad, 80)
-            if r.profiles:
-                label += f" ({', '.join(r.profiles)})"
-        groups.setdefault((r.benefit, r.diploma), [])
-        if label not in groups[(r.benefit, r.diploma)]:
-            groups[(r.benefit, r.diploma)].append(label)
-    order = sorted(groups, key=lambda k: (_benefit_order(k[0]), k[1]))
-    for benefit, diploma in order:
-        names = sorted(groups[(benefit, diploma)], key=sort_key)
-        lines.append(f"{BENEFIT_ICONS[benefit]} <b>{BENEFIT_TYPES[benefit]} — {DIPLOMAS[diploma]}</b> ({len(names)}):")
-        lines.append(escape(", ".join(names)))
-        lines.append("")
+    lines += _university_groups(u.rules)
     lines.append(f'Источник: <a href="{escape(u.source_url, quote=True)}">{escape(u.source_title or u.source_url)}</a>, '
                  f"проверено {ru_date(u.checked_at)} {u.checked_at.year}")
     return _fit(lines)

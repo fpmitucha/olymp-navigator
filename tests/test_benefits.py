@@ -134,9 +134,12 @@ class TextsTest(unittest.TestCase):
 
     def test_university_view(self):
         text = texts.university_benefits(self.u, 2027)
-        self.assertIn("🏅 <b>БВИ — победителям</b> (1):\nФизтех (математика)", text)
-        self.assertIn("💯 <b>100 баллов ЕГЭ — призёрам</b> (1):\nФизтех", text)
+        self.assertIn("🏅 <b>БВИ — победителям</b>\n• олимпиады (1): Физтех (математика)", text)
+        self.assertIn("💯 <b>100 баллов ЕГЭ — призёрам</b>\n• олимпиады (1): Физтех", text)
         self.assertIn('href="https://example.edu/olymp"', text)
+        wild = parse_file(university(rules=[{"olympiad": "*", "profiles": ["математика"], "levels": [1],
+                                             "benefit": "bvi", "diploma": "any"}]), self.c)
+        self.assertIn("• любая олимпиада I уровня — профили: математика", texts.university_benefits(wild, 2027))
         old = parse_file(university(admission_year=2026), self.c)
         self.assertIn("это данные прошлого года", texts.university_benefits(old, 2027))
 

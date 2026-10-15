@@ -55,6 +55,8 @@ class Rule:
     note: str | None
     score_for: str | None = None   # за что ставят 100 баллов: «ЕГЭ по физике», «ДВИ по математике»
     wildcard: str | None = None    # правило «любая олимпиада…» — его описание для экранов вуза
+    # для группировки на экране вуза: (уровни, "profile" | "subject", названия)
+    wildcard_spec: tuple | None = None
 
 
 @dataclass
@@ -394,6 +396,8 @@ def _wildcard_rules(merged: dict, catalog: Catalog, where: str, errors: list[str
         note=merged.get("note") or label,
         score_for=merged.get("score_for"),
         wildcard=label,
+        wildcard_spec=(tuple(sorted(levels or [1, 2, 3])), "profile" if profiles else "subject",
+                       tuple(profiles or subjects)),
     ) for o, profile in wildcard_matches(catalog, profiles, subjects, levels, year)]
 
 
