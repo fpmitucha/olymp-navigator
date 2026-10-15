@@ -231,6 +231,52 @@ def cmd_benefits_import_msu(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_import_mephi(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.mephi_benefits import parse_mephi_html, resolve_numbers
+
+    if args.source.startswith("http"):
+        from app.fetch import fetch_html
+
+        html = fetch_html(args.source)
+    else:
+        html = Path(args.source).read_text(encoding="utf-8")
+    table = parse_mephi_html(html)
+    catalog = _catalog()
+    rules, problems = resolve_import(resolve_numbers(table.rules, catalog, args.rsr_year), catalog)
+    doc = {
+        "university": "МИФИ",
+        "full_name": "Национальный исследовательский ядерный университет «МИФИ»",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.source if args.source.startswith("http") else args.url,
+        "source_title": table.title or "Особые права победителей и призёров олимпиад, НИЯУ МИФИ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Льготы победителям и призёрам; ЕГЭ или экзамен МИФИ от 75 по предмету олимпиады.",
+            "БВИ — за дипломы 10–11 класса, 100 баллов — за дипломы 8–11 класса.",
+            "Кто не использовал право на БВИ, может засчитать 100 баллов по предмету олимпиады.",
+            "Направления указаны кодами (01.03.02 и т. п.) — названия в правилах приёма МИФИ.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Пропущено", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -415,6 +461,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rsr-year", default="2025/26", help="учебный год перечня для «*»")
     p.add_argument("--url", default="https://cpk.msu.ru/files/2026/olymp_benefits.pdf")
     p.set_defaults(func=cmd_benefits_import_msu)
+    mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
+    p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
+    p.add_argument("source", nargs="?", default=mephi_url)
+    p.add_argument("--out", default="benefits/mephi_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.add_argument("--url", default=mephi_url)
+    p.set_defaults(func=cmd_benefits_import_mephi)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")
