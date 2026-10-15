@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from dataclasses import dataclass, field
@@ -111,6 +112,7 @@ _HOMOGLYPHS = str.maketrans("aceopxyABCEHKMOPTX", "асеорхуАВСЕНКМ�
 def _fix_homoglyphs(text: str) -> str:
     """Меняет латинские двойники на кириллицу в словах, где есть кириллица («Bысшая» → «Высшая»)."""
     text = re.sub(r"[\u00ad\u200b-\u200d\u2060\ufeff]", "", text)  # мягкие переносы, невидимые пробелы
+    text = re.sub(r"\s+[-–—]\s*|\s*[-–—]\s+", " - ", text)  # «исследователи -будущее» → «исследователи - будущее»
     words = []
     for word in text.split(" "):
         if any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in word):
@@ -156,13 +158,25 @@ def wildcard_matches(catalog: Catalog, profiles: list[str] | None, subjects: lis
         for name, p in o.profiles_in(academic_year).items():
             if p.level not in wanted_levels:
                 continue
-            if want_profiles and _norm(name) not in want_profiles:
+            if want_profiles and not _profile_fits(name, want_profiles):
                 continue
             if want_subjects and not want_subjects & {_norm(x) for x in p.subjects}:
                 continue
             if want_profiles or want_subjects:
                 found.append((o, name))
     return sorted(found, key=lambda x: (x[0].name, x[1]))
+
+
+def _profile_fits(catalog_name: str, wanted: set[str]) -> bool:
+    """Профиль каталога подходит: совпадает, содержит нужный как часть составного профиля НТО
+    («беспилотный транспорт: …, летающая робототехника») или отличается опечаткой."""
+    norm = _norm(catalog_name)
+    if norm in wanted:
+        return True
+    parts = {p.strip() for p in re.split(r"[:,]", norm)}
+    if parts & wanted or any(len(w) >= 20 and norm.startswith(w) for w in wanted):
+        return True
+    return any(difflib.SequenceMatcher(None, norm, w).ratio() >= 0.9 for w in wanted)
 
 
 def wildcard_label(profiles: list[str] | None, subjects: list[str] | None, levels: list[int] | None) -> str:
@@ -205,13 +219,28 @@ def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], lis
                     return by_norm[norm]
                 # обрезанное в таблице название: «…химический инжинирин» → единственный профиль с таким началом
                 prefixed = [p for n, p in by_norm.items() if len(norm) >= 10 and n.startswith(norm)]
-                return prefixed[0] if len(prefixed) == 1 else None
+                if len(prefixed) == 1:
+                    return prefixed[0]
+                # опечатка: «разработка мобильных предложений» → «…приложений»
+                close = difflib.get_close_matches(norm, list(by_norm), n=2, cutoff=0.9)
+                if len(close) == 1:
+                    return by_norm[close[0]]
+                # вместо профиля указан предмет: «информатика» у олимпиады с профилем «искусственный интеллект»
+                by_subject = [name for name, by_year in olympiad.profiles.items()
+                              if any(norm in {_norm(x) for x in p.subjects} for p in by_year.values())]
+                if len(by_subject) == 1:
+                    guessed.append(f"в таблице вуза профиль «{name}», в перечне — «{by_subject[0]}»")
+                    return by_subject[0]
+                return None
 
+            guessed: list[str] = []
             fixed = [match(p) for p in profiles]
             if None in fixed:
                 problems.append(f"профиль {profiles} не найден у «{olympiad.name}»; есть: {sorted(olympiad.profiles)}")
                 continue
             rule = {**rule, "profiles": fixed}
+            if guessed:
+                rule["note"] = "; ".join(([rule["note"]] if rule.get("note") else []) + guessed)
         kept.append(rule)
     return kept, sorted(set(problems))
 

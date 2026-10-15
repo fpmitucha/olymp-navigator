@@ -116,3 +116,11 @@ class HseImportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FallbackTest(unittest.TestCase):
+    def test_typo_profile(self):
+        from app.benefits import resolve_import
+
+        kept, problems = resolve_import([{"olympiad": "НТО", "profiles": ["летающая робототехнико"]}], sample_catalog())
+        self.assertEqual((kept[0]["profiles"], problems), (["летающая робототехника"], []))

@@ -317,6 +317,57 @@ def cmd_benefits_import_spbu(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_import_itmo(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.itmo_benefits import build_joiner, parse_rsosh_rows, parse_vsosh_rows, read_pdf_rows
+
+    catalog = _catalog()
+    files = {"bvi": args.bvi, "score100": args.score100, "vsosh": args.vsosh}
+    loaded = {k: read_pdf_rows(v) for k, v in files.items() if v}
+    join = build_joiner([text for _, text in loaded.values()], catalog)
+    imports = []
+    for kind in ("bvi", "score100"):
+        if kind in loaded:
+            imports.append(parse_rsosh_rows(loaded[kind][0], kind, join))
+    if "vsosh" in loaded:
+        vsosh = next(o for o in catalog.olympiads.values() if o.is_vsosh)
+        imports.append(parse_vsosh_rows(loaded["vsosh"][0], join, sorted(vsosh.profiles)))
+    raw = [r for imp in imports for r in imp.rules]
+    rules, problems = resolve_import([{**r, "rsr_year": args.rsr_year} if r["olympiad"] == "*" else r
+                                      for r in raw], catalog)
+    doc = {
+        "university": "ИТМО",
+        "full_name": "Национальный исследовательский университет ИТМО",
+        "city": "Санкт-Петербург",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": "https://abit.itmo.ru/bachelor",
+        "source_title": f"Учёт дипломов олимпиад РСОШ и ВсОШ при поступлении в ИТМО в {args.year} году",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Засчитываются дипломы РСОШ за 10 и 11 класс; ЕГЭ по предмету подтверждения — от 75 баллов.",
+            "100 баллов дают олимпиады, которые не дают БВИ на это направление.",
+            f"«Любая олимпиада перечня» — по перечню {args.rsr_year} учебного года.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"строк: {sum(i.rows for i in imports)}, правил: {len(raw)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    warnings = [w for i in imports for w in i.warnings]
+    for title, items in (("Не разобрано", warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -508,6 +559,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rsr-year", default="2025/26")
     p.add_argument("--url", default="https://abiturient.spbu.ru/medialibrary/ru/2026/bac/bac_spec_olymp_2_2026.pdf")
     p.set_defaults(func=cmd_benefits_import_spbu)
+    p = ben.add_parser("import-itmo", help="импорт PDF особых прав ИТМО (нужен pdfplumber)")
+    p.add_argument("--bvi", default="data/itmo_rsosh_bvi_2026.pdf")
+    p.add_argument("--score100", default="data/itmo_rsosh_100_2026.pdf")
+    p.add_argument("--vsosh", default="data/itmo_vsosh_2026.pdf")
+    p.add_argument("--out", default="benefits/itmo_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.set_defaults(func=cmd_benefits_import_itmo)
     mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
     p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
     p.add_argument("source", nargs="?", default=mephi_url)
