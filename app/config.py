@@ -38,6 +38,8 @@ class Settings:
     telegram_proxy: str = os.environ.get("TELEGRAM_PROXY", "")
     # Ходить в Telegram только по IPv4: у многих провайдеров IPv6-маршрут до Telegram «висит»
     telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")
+    # Раз в сутки забирать даты этапов с olimpiada.ru, пока работает бот
+    stages_autosync: bool = os.environ.get("STAGES_AUTOSYNC", "1").strip().lower() not in ("0", "false", "no")
     bot_db_path: Path = Path(os.environ.get("BOT_DB_PATH", Path(os.environ.get("DATA_DIR", PROJECT_ROOT / "data")) / "bot.sqlite3"))
 
 

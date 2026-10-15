@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Сокращённый https://olimpiada.ru/sitemap.xml от 15.10.2026 (в оригинале 20 682 адреса, из них 1144 олимпиады) -->
+<urlset xmlns="https://www.sitemaps.org/schemas/sitemap/0.9">
+<url>
+<loc>https://olimpiada.ru/</loc>
+<priority>1.0</priority>
+<lastmod>2020-06-30</lastmod></url>
+<url>
+<loc>https://olimpiada.ru/activities</loc>
+<priority>1.0</priority></url>
+<url>
+<loc>https://olimpiada.ru/activity/1</loc></url>
+<url>
+<loc>https://olimpiada.ru/activity/395</loc></url>
+<url>
+<loc>https://olimpiada.ru/activity/395/events/23149</loc></url>
+<url>
+<loc>https://olimpiada.ru/news/34548</loc></url>
+<url>
+<loc>https://olimpiada.ru/activity/1</loc></url>
+</urlset>

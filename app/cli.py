@@ -11,6 +11,7 @@
     python -m app.cli bot run
     python -m app.cli bot check
     python -m app.cli stages import stages.csv
+    python -m app.cli stages sync
     python -m app.cli stages list
 """
 
@@ -131,7 +132,7 @@ def cmd_bot_run(args: argparse.Namespace) -> int:
     print("Бот запущен, остановка — Ctrl+C")
     try:
         asyncio.run(run(token, catalog, storage, proxy=settings.telegram_proxy,
-                        force_ipv4=settings.telegram_force_ipv4))
+                        force_ipv4=settings.telegram_force_ipv4, stages_autosync=settings.stages_autosync))
     except KeyboardInterrupt:
         pass
     finally:
@@ -168,6 +169,38 @@ def cmd_stages_import(args: argparse.Namespace) -> int:
     storage.close()
     print(f"Загружено этапов: {count}")
     return 0
+
+
+def cmd_stages_sync(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
+    from app.bot.notifier import STAGES_SYNC_KEY, moscow_now
+    from app.bot.storage import Storage
+    from app.fetch import fetch_html
+    from app.stages_sync import sync_stages
+
+    catalog = _catalog()
+    storage = Storage(settings.bot_db_path)
+
+    def progress(i: int, total: int, name: str) -> None:
+        print(f"\r[{i}/{total}] {name[:70]:<70}", end="", flush=True)
+
+    print(f"Загружаю расписания с olimpiada.ru, пауза между запросами {settings.request_delay:g} с. "
+          "Первый запуск ищет все страницы олимпиад перечня (около 1100 страниц, до часа), "
+          "следующие — только обновляют известные (около 300 страниц).")
+    try:
+        report = sync_stages(catalog, storage, fetch_html, moscow_now().date(),
+                             full=args.full, limit=args.limit, progress=progress)
+        if not args.limit:
+            storage.set_meta(STAGES_SYNC_KEY, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    finally:
+        storage.close()
+    print("\n" + report.summary())
+    for line in report.unmatched:
+        print(f"  ? не нашёл в перечне: {line}")
+    for line in report.errors:
+        print(f"  ! {line}")
+    return 0 if not report.errors else 1
 
 
 def cmd_stages_list(args: argparse.Namespace) -> int:
@@ -244,6 +277,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = stages.add_parser("import", help="загрузить этапы из CSV")
     p.add_argument("csv")
     p.set_defaults(func=cmd_stages_import)
+    p = stages.add_parser("sync", help="загрузить даты этапов с olimpiada.ru")
+    p.add_argument("--limit", type=int, help="проверить только первые N страниц (пробный запуск)")
+    p.add_argument("--full", action="store_true", help="заново найти все страницы перечня через sitemap")
+    p.set_defaults(func=cmd_stages_sync)
     p = stages.add_parser("list", help="показать загруженные этапы")
     p.set_defaults(func=cmd_stages_list)
     return parser

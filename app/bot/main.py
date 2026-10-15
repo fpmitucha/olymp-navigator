@@ -32,7 +32,7 @@ from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, Inlin
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot import texts
-from app.bot.notifier import TemporaryError, UserBlocked, moscow_now, reminder_loop
+from app.bot.notifier import TemporaryError, UserBlocked, moscow_now, reminder_loop, stages_sync_loop
 from app.bot.storage import Storage
 from app.catalog import Catalog, CatalogOlympiad
 
@@ -385,7 +385,8 @@ def make_bot(token: str, proxy: str = "", force_ipv4: bool = True) -> Bot:
                default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
 
 
-async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", force_ipv4: bool = True) -> None:
+async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", force_ipv4: bool = True,
+              stages_autosync: bool = True) -> None:
     bot = make_bot(token, proxy=proxy, force_ipv4=force_ipv4)
     log.info("Соединение с Telegram: %s", f"через прокси {proxy.split('@')[-1]}" if proxy
              else ("только IPv4" if force_ipv4 else "IPv4 и IPv6"))
@@ -404,9 +405,14 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
     log.info("Бот @%s запущен. Олимпиад в каталоге: %s, годы: %s",
              me.username, len(catalog.olympiads), ", ".join(catalog.years))
     print(f"\nНапишите боту: https://t.me/{me.username}  (каждое сообщение появится здесь строкой «Update id=…»)\n")
-    reminders = asyncio.create_task(reminder_loop(storage, catalog, make_sender(bot)))
+    tasks = [asyncio.create_task(reminder_loop(storage, catalog, make_sender(bot)))]
+    if stages_autosync and storage.path != ":memory:":
+        from app.fetch import fetch_html
+
+        tasks.append(asyncio.create_task(stages_sync_loop(catalog, storage.path, fetch_html)))
     try:
         await dp.start_polling(bot)
     finally:
-        reminders.cancel()
+        for task in tasks:
+            task.cancel()
         await bot.session.close()

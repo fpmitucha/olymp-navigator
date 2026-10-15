@@ -58,6 +58,13 @@ def ru_period(start: date | None, end: date | None) -> str:
     return ru_date(d) if d else "дата уточняется"
 
 
+def stage_when(s: Stage) -> str:
+    """«до 31 октября» для дедлайнов, иначе дата или период."""
+    if s.starts_at is None and s.ends_at is not None:
+        return f"до {ru_date(s.ends_at)}"
+    return ru_period(s.starts_at, s.ends_at)
+
+
 def days_phrase(days: int) -> str:
     if days == 0:
         return "сегодня"
@@ -307,7 +314,7 @@ def olympiad_card(
         lines.append("📅 <b>Ближайшие этапы</b>")
         for s in upcoming:
             profile = f" ({escape(s.profile)})" if s.profile else ""
-            lines.append(f"• {ru_period(s.starts_at, s.ends_at)} — {escape(s.title)}{profile}")
+            lines.append(f"• {stage_when(s)} — {escape(s.title)}{profile}")
     else:
         lines.append("📅 <i>Даты этапов пока не загружены. Подпишись — напишу, когда появятся.</i>")
 
@@ -374,6 +381,23 @@ def subscriptions_list(olympiads: list[CatalogOlympiad]) -> str:
                 "я напомню о регистрации и этапах.")
     return (f"🔔 <b>Подписки ({len(olympiads)})</b>\n\n"
             "Напомню о регистрации и этапах этих олимпиад. Нажми на олимпиаду, чтобы открыть карточку.")
+
+
+MAX_ANNOUNCED = 8
+
+
+def new_stages(o: CatalogOlympiad, stages: list[Stage]) -> str:
+    """Сообщение подписчику: у олимпиады появились даты."""
+    name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 80))
+    ordered = sorted(stages, key=lambda s: (s.starts_at or s.ends_at, s.title))
+    lines = [f"📅 <b>Появились даты: «{name}»</b>", ""]
+    for s in ordered[:MAX_ANNOUNCED]:
+        profile = f" ({escape(s.profile)})" if s.profile else ""
+        lines.append(f"• {stage_when(s)} — {escape(s.title)}{profile}")
+    if len(ordered) > MAX_ANNOUNCED:
+        lines.append(f"…и ещё {len(ordered) - MAX_ANNOUNCED} — в карточке олимпиады.")
+    lines += ["", "Напомню ближе к делу."]
+    return "\n".join(lines)
 
 
 def reminder(r: Reminder, o: CatalogOlympiad) -> str:

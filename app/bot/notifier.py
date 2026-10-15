@@ -18,7 +18,7 @@ from typing import Awaitable, Callable
 from app.bot import texts
 from app.bot.storage import Storage
 from app.catalog import Catalog
-from app.stages import due_reminders
+from app.stages import ANNOUNCE, due_announcements, due_reminders
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +54,38 @@ def moscow_now() -> datetime:
 def is_quiet_time(now: datetime) -> bool:
     hour = now.astimezone(MOSCOW).hour
     return not (QUIET_BEFORE <= hour < QUIET_AFTER)
+
+
+STAGES_SYNC_EVERY = timedelta(hours=20)
+STAGES_SYNC_KEY = "stages_synced_at"
+
+
+async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: float = 60 * 60) -> None:
+    """Раз в сутки забирает даты этапов с olimpiada.ru. Синхронизация идёт в отдельном потоке
+    со своим подключением к базе, чтобы бот продолжал отвечать."""
+    from app.stages_sync import sync_stages
+
+    def run_sync() -> str:
+        storage = Storage(db_path)
+        try:
+            last = storage.get_meta(STAGES_SYNC_KEY)
+            now = datetime.now(timezone.utc)
+            if last and now - datetime.fromisoformat(last) < STAGES_SYNC_EVERY:
+                return ""
+            report = sync_stages(catalog, storage, fetch, moscow_now().date())
+            storage.set_meta(STAGES_SYNC_KEY, now.isoformat(timespec="seconds"))
+            return report.summary()
+        finally:
+            storage.close()
+
+    while True:
+        try:
+            summary = await asyncio.to_thread(run_sync)
+            if summary:
+                log.info("Даты этапов обновлены с olimpiada.ru: %s", summary)
+        except Exception:  # noqa: BLE001 — сайт может быть недоступен, попробуем через час
+            log.exception("Не удалось обновить даты этапов с olimpiada.ru")
+        await asyncio.sleep(check_every)
 
 
 async def send_due_reminders(
@@ -97,6 +129,42 @@ async def send_due_reminders(
     return result
 
 
+async def send_new_stage_announcements(
+    storage: Storage, catalog: Catalog, send: SendFn, today: date, pause: float = SEND_PAUSE
+) -> RunResult:
+    """Подписчикам — одно сообщение на олимпиаду о появившихся датах."""
+    result = RunResult()
+    stages = [replace(s, olympiad_id=catalog.canonical_id(s.olympiad_id)) for s in storage.stages()]
+    subs = [(tid, catalog.canonical_id(oid), since) for tid, oid, since in storage.subscriptions_since()]
+    blocked: set[int] = set()
+    for (telegram_id, olympiad_id), fresh in due_announcements(
+            today, stages, subs, storage.sent_notifications()).items():
+        olympiad = catalog.get(olympiad_id)
+        if olympiad is None or telegram_id in blocked:
+            continue
+        try:
+            await send(telegram_id, texts.new_stages(olympiad, fresh))
+        except UserBlocked:
+            storage.deactivate_user(telegram_id)
+            blocked.add(telegram_id)
+            result.blocked += 1
+            continue
+        except TemporaryError as exc:
+            log.warning("Не удалось отправить новые даты %s: %s, повторю позже", olympiad_id, exc)
+            result.postponed += 1
+            continue
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка при отправке новых дат %s", olympiad_id)
+            result.failed += 1
+        else:
+            result.sent += 1
+        for s in fresh:
+            storage.log_notification(telegram_id, s.id, ANNOUNCE)
+        if pause:
+            await asyncio.sleep(pause)
+    return result
+
+
 async def reminder_loop(storage: Storage, catalog: Catalog, send: SendFn, interval: float = 15 * 60) -> None:
     """Каждые 15 минут проверяет, не пора ли напомнить. Ночью молчит."""
     while True:
@@ -106,6 +174,9 @@ async def reminder_loop(storage: Storage, catalog: Catalog, send: SendFn, interv
                 result = await send_due_reminders(storage, catalog, send, now.date())
                 if result.sent or result.blocked or result.failed or result.postponed:
                     log.info("Напоминания: %s", result)
+                result = await send_new_stage_announcements(storage, catalog, send, now.date())
+                if result.sent or result.blocked or result.failed or result.postponed:
+                    log.info("Сообщения о новых датах: %s", result)
             except Exception:  # noqa: BLE001 — цикл не должен падать
                 log.exception("Сбой рассылки напоминаний")
         await asyncio.sleep(interval)
