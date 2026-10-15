@@ -157,3 +157,18 @@ class PrizeWarningTest(unittest.TestCase):
         self.assertTrue(prize_bvi_affected([rule(rsosh, "bvi", "prize")]))
         self.assertFalse(prize_bvi_affected([rule(rsosh, "bvi", "winner"), rule(rsosh, "score100", "any")]))
         self.assertFalse(prize_bvi_affected([rule(vsosh, "bvi", "any")]))
+
+
+class NotInListTest(unittest.TestCase):
+    def test_banner(self):
+        from types import SimpleNamespace
+
+        from app.bot.texts import list_year, not_in_list_banner
+
+        self.assertEqual(list_year(2027), "2026/27")
+        gone = SimpleNamespace(is_vsosh=False, profiles_in=lambda y: {})
+        stays = SimpleNamespace(is_vsosh=False, profiles_in=lambda y: {"математика": 1})
+        rule = SimpleNamespace(profiles=["физика"])
+        self.assertIn("Олимпиады нет в перечне 2026/27", not_in_list_banner(gone, [rule], 2027)[0])
+        self.assertIn("Профилей физика нет", not_in_list_banner(stays, [rule], 2027)[0])
+        self.assertEqual(not_in_list_banner(stays, [SimpleNamespace(profiles=["математика"])], 2027), [])

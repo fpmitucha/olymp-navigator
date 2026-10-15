@@ -431,6 +431,34 @@ PRIZE_BVI_WARNING = ("⚠️ <i>Проект Минобрнауки (сентя�
                      "только победителям, призёрам — 100 баллов ЕГЭ. Пока не принят, следим.</i>")
 
 
+def list_year(admission_year: int) -> str:
+    """Перечень, по которому пишут олимпиады в год перед приёмом: приём 2027 → «2026/27»."""
+    return f"{admission_year - 1}/{admission_year % 100:02d}"
+
+
+def dropped_profiles(o: CatalogOlympiad, rules: list[Rule], year: str) -> set[str]:
+    """Профили из правил, которых нет в перечне `year` (олимпиада осталась, профиль — нет)."""
+    if o.is_vsosh:
+        return set()
+    current = set(o.profiles_in(year))
+    return {p for r in rules for p in r.profiles or [] if p not in current}
+
+
+def not_in_list_banner(o: CatalogOlympiad, rules: list[Rule], admission_year: int) -> list[str]:
+    """Предупреждения, если олимпиады или её профилей нет в текущем перечне."""
+    year = list_year(admission_year)
+    if o.is_vsosh:
+        return []
+    if not o.profiles_in(year):
+        return [f"📌 <i>Олимпиады нет в перечне {year} — дипломы этого учебного года льгот не дают. "
+                f"Ниже — льготы для дипломов прошлых лет (они действуют 4 года).</i>", ""]
+    dropped = dropped_profiles(o, rules, year)
+    if dropped:
+        return [f"📌 <i>Профилей {escape(', '.join(sorted(dropped)))} нет в перечне {year} — "
+                f"по ним льготы только для дипломов прошлых лет.</i>", ""]
+    return []
+
+
 def prize_bvi_affected(rules: list[Rule]) -> bool:
     """Есть БВИ призёрам олимпиады РСОШ — на такие льготы может повлиять проект Минобрнауки."""
     return any(r.benefit == "bvi" and r.diploma in ("prize", "any") and not r.olympiad.is_vsosh for r in rules)
@@ -530,6 +558,7 @@ def olympiad_benefits(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits
         return (f"🎓 <b>Льготы: «{name}»</b>\n\nПока нет данных ни по одному вузу из тех, что мы собрали. "
                 f"Список вузов пополняется — загляни в «🎓 Вузы» в меню.")
     lines = [f"🎓 <b>Льготы: «{name}»</b>", ""]
+    lines += not_in_list_banner(o, [r for _, rules in entries for r in rules], admission_year)
     if prize_bvi_affected([r for _, rules in entries for r in rules]):
         lines += [PRIZE_BVI_WARNING, ""]
     for u, rules in entries:
@@ -547,6 +576,7 @@ def olympiad_university_benefits(o: CatalogOlympiad, u: UniversityBenefits, rule
     """Все правила одного вуза для олимпиады — со списками программ."""
     name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
     lines = [f"🎓 <b>{escape(u.university)}: «{name}»</b>", f"<i>{u.status_label(admission_year)}</i>", ""]
+    lines += not_in_list_banner(o, rules, admission_year)
     if prize_bvi_affected(rules):
         lines += [PRIZE_BVI_WARNING, ""]
     order = sorted(rules, key=lambda r: (_benefit_order(r.benefit), (r.profiles or [""])[0], r.diploma != "any"))
