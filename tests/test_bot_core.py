@@ -72,6 +72,12 @@ class TextsTest(unittest.TestCase):
         self.assertEqual(texts.days_phrase(21), "через 21 день")
         self.assertEqual(texts.days_phrase(11), "через 11 дней")
 
+    def test_stage_when(self):
+        deadline = Stage(1, "o", "registration", "Регистрация", None, date(2026, 10, 31))
+        self.assertEqual(texts.stage_when(deadline), "до 31 октября")
+        span = Stage(2, "o", "final", "Финал", date(2027, 1, 13), date(2027, 2, 7))
+        self.assertEqual(texts.stage_when(span), "13 января – 7 февраля")
+
     def test_periods(self):
         self.assertEqual(texts.ru_period(date(2026, 11, 20), None), "20 ноября")
         self.assertEqual(texts.ru_period(date(2026, 11, 20), date(2026, 11, 22)), "20–22 ноября")
@@ -237,6 +243,34 @@ class NotifierTest(unittest.TestCase):
 
         self.run_send(send)
         self.assertEqual(sent, [7])
+
+    def test_new_dates_message_once_per_olympiad(self):
+        import time
+
+        self.storage.subscribe(5, self.fiztech.id)
+        time.sleep(1.1)  # время в базе — с точностью до секунды; этапы появились позже подписки
+        self.storage.upsert_stages([
+            StageRow(self.fiztech.id, "final", "Финал", date(2027, 2, 14), None, "математика", "2026/27", None,
+                     "olimpiada:395:23152"),
+            StageRow(self.fiztech.id, "registration", "Регистрация", None, date(2026, 11, 13), None, "2026/27", None),
+        ])
+        sent = []
+
+        async def send(uid, text):
+            sent.append((uid, text))
+
+        from app.bot.notifier import send_new_stage_announcements
+
+        result = asyncio.run(send_new_stage_announcements(self.storage, self.catalog, send, TODAY, pause=0))
+        self.assertEqual(result.sent, 1)
+        self.assertEqual(len(sent), 1)
+        text = sent[0][1]
+        self.assertIn("Появились даты: «Физтех»", text)
+        self.assertIn("• до 13 ноября — Регистрация", text)
+        self.assertIn("• 14 февраля — Финал (математика)", text)
+        self.assertNotIn("Отборочный этап", text)  # был в базе до подписки
+        again = asyncio.run(send_new_stage_announcements(self.storage, self.catalog, send, TODAY, pause=0))
+        self.assertEqual(again.sent, 0)
 
     def test_quiet_hours(self):
         from datetime import datetime

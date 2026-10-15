@@ -108,3 +108,23 @@ class CsvImportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnnouncementsTest(unittest.TestCase):
+    def stage(self, id, created, start=date(2026, 11, 20), olympiad_id="o1"):
+        return Stage(id=id, olympiad_id=olympiad_id, kind="qualifying", title=f"Этап {id}",
+                     starts_at=start, ends_at=None, created_at=created)
+
+    def test_only_stages_added_after_subscription(self):
+        from app.stages import due_announcements
+
+        stages = [
+            self.stage(1, "2026-10-01T00:00:00+00:00"),                     # был до подписки — видел в карточке
+            self.stage(2, "2026-10-12T00:00:00+00:00"),                     # появился после
+            self.stage(3, "2026-10-12T00:00:00+00:00", start=date(2026, 11, 1)),  # уже прошёл
+            self.stage(4, "2026-10-12T00:00:00+00:00", olympiad_id="o2"),   # другая олимпиада
+            self.stage(5, ""),                                               # время неизвестно (старая база)
+        ]
+        subs = [(100, "o1", "2026-10-05T00:00:00+00:00"), (200, "o2", "2026-10-05T00:00:00+00:00")]
+        due = due_announcements(TODAY, stages, subs, already_sent={(200, 4, "announce")})
+        self.assertEqual({k: [s.id for s in v] for k, v in due.items()}, {(100, "o1"): [2]})

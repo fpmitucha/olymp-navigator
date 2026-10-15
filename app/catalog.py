@@ -69,6 +69,7 @@ class CatalogOlympiad:
     # профиль -> {учебный год -> Profile}
     profiles: dict[str, dict[str, Profile]] = field(default_factory=dict)
     websites: list[str] = field(default_factory=list)
+    numbers: dict[str, int] = field(default_factory=dict)  # учебный год -> номер в перечне
     _haystack: str = ""
 
     @property
@@ -202,6 +203,8 @@ def _combine(group: list[CatalogOlympiad]) -> CatalogOlympiad:
             for year, p in by_year.items():
                 target.setdefault(year, p)
         merged.websites.extend(r.websites)
+        for year, number in r.numbers.items():
+            merged.numbers.setdefault(year, number)
     merged.websites = dedupe_urls(merged.websites)
     return merged
 
@@ -228,6 +231,8 @@ class Catalog:
                     item = CatalogOlympiad(id=short_id(o.key), key=o.key, name=o.name, is_vsosh=o.key in vsosh_keys)
                     records[o.key] = item
                 item.name = o.name  # списки идут от старых к новым: остаётся самое свежее название
+                if o.number is not None:
+                    item.numbers[rsr.academic_year] = o.number
                 for p in o.profiles:
                     item.profiles.setdefault(p.profile, {})[rsr.academic_year] = p
                     if p.website:
@@ -282,6 +287,13 @@ class Catalog:
     def get(self, olympiad_id: str) -> CatalogOlympiad | None:
         """По id. Старые id переименованных олимпиад тоже работают (подписки не теряются)."""
         return self.olympiads.get(olympiad_id) or self._by_alias_id.get(olympiad_id)
+
+    def by_number(self, academic_year: str, number: int) -> CatalogOlympiad | None:
+        """Олимпиада по номеру в перечне РСОШ за учебный год."""
+        for o in self.olympiads.values():
+            if o.numbers.get(academic_year) == number:
+                return o
+        return None
 
     def canonical_id(self, olympiad_id: str) -> str:
         found = self.get(olympiad_id)

@@ -37,9 +37,18 @@ CREATE TABLE IF NOT EXISTS stage (
     starts_at      TEXT,
     ends_at        TEXT,
     source_url     TEXT,
-    UNIQUE (olympiad_id, academic_year, kind, title, profile)
+    external_id    TEXT,                       -- «olimpiada:<олимпиада>:<событие>» для загруженных с сайта
+    created_at     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS stage_olympiad_idx ON stage (olympiad_id);
+CREATE UNIQUE INDEX IF NOT EXISTS stage_external_idx ON stage (external_id) WHERE external_id IS NOT NULL;
+-- ручные этапы (из CSV) уникальны по смыслу, загруженные с сайта — по id события
+CREATE UNIQUE INDEX IF NOT EXISTS stage_manual_idx ON stage (olympiad_id, academic_year, kind, title, profile)
+    WHERE external_id IS NULL;
+CREATE TABLE IF NOT EXISTS meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS search_query (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     query       TEXT NOT NULL UNIQUE,     -- текст запроса; в кнопку Telegram (64 байта) он не влезает
@@ -73,8 +82,30 @@ class Storage:
         self.conn.execute("PRAGMA foreign_keys = ON")
         if self.path != ":memory:":
             self.conn.execute("PRAGMA journal_mode = WAL")
+        self._migrate_stage_table()
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+
+    def _migrate_stage_table(self) -> None:
+        """База первой версии бота: у stage не было external_id, а UNIQUE был на всей таблице.
+        Пересоздаём таблицу с сохранением строк (id остаются — журнал уведомлений не ломается)."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(stage)").fetchall()}
+        if not columns or "external_id" in columns:
+            return
+        self.conn.executescript("""
+            BEGIN;
+            ALTER TABLE stage RENAME TO stage_old;
+            DROP INDEX IF EXISTS stage_olympiad_idx;
+            CREATE TABLE stage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, olympiad_id TEXT NOT NULL, academic_year TEXT NOT NULL,
+                profile TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, title TEXT NOT NULL,
+                starts_at TEXT, ends_at TEXT, source_url TEXT, external_id TEXT, created_at TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO stage (id, olympiad_id, academic_year, profile, kind, title, starts_at, ends_at, source_url)
+                SELECT id, olympiad_id, academic_year, profile, kind, title, starts_at, ends_at, source_url FROM stage_old;
+            DROP TABLE stage_old;
+            COMMIT;
+        """)
 
     def close(self) -> None:
         self.conn.close()
@@ -146,21 +177,63 @@ class Storage:
     # -- этапы ---------------------------------------------------------------
 
     def upsert_stages(self, rows: list[StageRow]) -> int:
-        """Добавляет этапы или обновляет даты существующих. Возвращает число строк."""
+        """Добавляет этапы или обновляет даты существующих. Возвращает число строк.
+
+        Этапы с external_id (загруженные с сайта) узнаются по нему, ручные — по олимпиаде,
+        году, виду, названию и профилю.
+        """
+        now = _now()
         for r in rows:
-            self.conn.execute(
-                """
-                INSERT INTO stage (olympiad_id, academic_year, profile, kind, title, starts_at, ends_at, source_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (olympiad_id, academic_year, kind, title, profile) DO UPDATE SET
-                    starts_at = excluded.starts_at, ends_at = excluded.ends_at, source_url = excluded.source_url
-                """,
-                (r.olympiad_id, r.academic_year, r.profile or '', r.kind, r.title,
-                 r.starts_at.isoformat() if r.starts_at else None,
-                 r.ends_at.isoformat() if r.ends_at else None, r.source_url),
-            )
+            values = (r.olympiad_id, r.academic_year, r.profile or "", r.kind, r.title,
+                      r.starts_at.isoformat() if r.starts_at else None,
+                      r.ends_at.isoformat() if r.ends_at else None, r.source_url, r.external_id, now)
+            insert = ("INSERT INTO stage (olympiad_id, academic_year, profile, kind, title, starts_at, ends_at, "
+                      "source_url, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ")
+            if r.external_id:
+                self.conn.execute(insert + """
+                    ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET
+                        olympiad_id = excluded.olympiad_id, academic_year = excluded.academic_year,
+                        profile = excluded.profile, kind = excluded.kind, title = excluded.title,
+                        starts_at = excluded.starts_at, ends_at = excluded.ends_at, source_url = excluded.source_url
+                """, values)
+            else:
+                self.conn.execute(insert + """
+                    ON CONFLICT (olympiad_id, academic_year, kind, title, profile) WHERE external_id IS NULL
+                    DO UPDATE SET starts_at = excluded.starts_at, ends_at = excluded.ends_at,
+                        source_url = excluded.source_url
+                """, values)
         self.conn.commit()
         return len(rows)
+
+    def replace_external_stages(self, prefix: str, rows: list[StageRow]) -> tuple[int, int]:
+        """Синхронизация одного источника: обновляет этапы с external_id, начинающимся с prefix,
+        и удаляет те, что пропали с сайта. Возвращает (сохранено, удалено)."""
+        self.upsert_stages(rows)
+        keep = [r.external_id for r in rows if r.external_id]
+        placeholders = ",".join("?" * len(keep)) or "''"
+        cur = self.conn.execute(
+            f"DELETE FROM stage WHERE external_id LIKE ? AND external_id NOT IN ({placeholders})",
+            (prefix + "%", *keep),
+        )
+        self.conn.commit()
+        return len(rows), cur.rowcount
+
+    def get_meta(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) "
+                          "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
+        self.conn.commit()
+
+    def subscriptions_since(self) -> list[tuple[int, str, str]]:
+        """(telegram_id, olympiad_id, когда подписался) для активных пользователей."""
+        rows = self.conn.execute(
+            "SELECT s.telegram_id, s.olympiad_id, s.created_at FROM subscription s "
+            "JOIN bot_user u ON u.telegram_id = s.telegram_id WHERE u.is_active = 1"
+        ).fetchall()
+        return [(r["telegram_id"], r["olympiad_id"], r["created_at"]) for r in rows]
 
     def stages(self, olympiad_id: str | None = None) -> list[Stage]:
         sql = "SELECT * FROM stage"
@@ -174,6 +247,7 @@ class Storage:
                 id=r["id"], olympiad_id=r["olympiad_id"], kind=r["kind"], title=r["title"],
                 starts_at=_date(r["starts_at"]), ends_at=_date(r["ends_at"]),
                 academic_year=r["academic_year"], profile=r["profile"] or None, source_url=r["source_url"],
+                created_at=r["created_at"] or "",
             )
             for r in self.conn.execute(sql, params).fetchall()
         ]

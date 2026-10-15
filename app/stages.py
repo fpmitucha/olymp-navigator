@@ -39,6 +39,7 @@ class Stage:
     academic_year: str = ""
     profile: str | None = None
     source_url: str | None = None
+    created_at: str = ""   # ISO-время добавления в базу; '' — неизвестно (этапы из старой версии)
 
     @property
     def kind_label(self) -> str:
@@ -109,6 +110,34 @@ def due_reminders(
     return result
 
 
+def due_announcements(
+    today: date,
+    stages: list[Stage],
+    subscriptions: list[tuple[int, str, str]],
+    already_sent: set[tuple[int, int, str]],
+) -> dict[tuple[int, str], list[Stage]]:
+    """Новые даты для подписчиков: (telegram_id, id олимпиады) -> этапы, о которых ещё не писали.
+
+    Сообщаем об этапах, которые появились в базе после подписки: то, что было на момент
+    подписки, человек уже видел в карточке. subscriptions — (telegram_id, id олимпиады, когда подписался).
+    """
+    by_olympiad: dict[str, list[Stage]] = {}
+    for s in stages:
+        if s.is_upcoming(today) and s.created_at:
+            by_olympiad.setdefault(s.olympiad_id, []).append(s)
+    result: dict[tuple[int, str], list[Stage]] = {}
+    for telegram_id, olympiad_id, since in subscriptions:
+        fresh = [s for s in by_olympiad.get(olympiad_id, [])
+                 if s.created_at > since and (telegram_id, s.id, ANNOUNCE) not in already_sent]
+        if fresh:
+            bucket = result.setdefault((telegram_id, olympiad_id), [])
+            bucket.extend(s for s in fresh if s not in bucket)
+    return result
+
+
+ANNOUNCE = "announce"
+
+
 # ---------------------------------------------------------------------------
 # Импорт из CSV
 # ---------------------------------------------------------------------------
@@ -126,6 +155,7 @@ class StageRow:
     profile: str | None
     academic_year: str
     source_url: str | None
+    external_id: str | None = None
 
 
 def _parse_date(value: str, line: int, column: str) -> date | None:
