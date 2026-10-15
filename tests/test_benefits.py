@@ -99,9 +99,31 @@ class TextsTest(unittest.TestCase):
         rules = [r for r in self.u.rules if r.olympiad is fiztech]
         text = texts.olympiad_benefits(fiztech, [(self.u, rules)], 2027)
         self.assertIn("<b>Тестовый вуз</b> — <i>приём 2027</i>", text)
-        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", text)
-        self.assertIn("💯 100 баллов — призёрам", text)
-        self.assertIn("ЕГЭ от 75 по предмету профиля · диплом за 11 класс", text)
+        self.assertIn("🏅 БВИ — победителям: математика", text)
+        self.assertIn("💯 100 баллов — призёрам: любой профиль", text)
+        self.assertIn("ЕГЭ от 75 · диплом за 11 класс", text)
+        detail = texts.olympiad_university_benefits(fiztech, self.u, rules, 2027)
+        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", detail)
+        self.assertIn("ЕГЭ от 75 по предмету профиля · диплом за 11 класс", detail)
+        self.assertIn("направления — по профилю олимпиады", detail)
+
+    def test_summary_counts_programs(self):
+        from app.benefits import parse_file
+
+        data = university(rules=[
+            {"olympiad": "Физтех", "benefit": "bvi", "diploma": "any", "profiles": ["математика"],
+             "programs": ["01.03.01 Математика", "01.03.02 ПМИ"], "confirm_min_score": 75},
+            {"olympiad": "Физтех", "benefit": "bvi", "diploma": "any", "profiles": ["математика"], "grades": [10],
+             "programs": ["01.03.01 Математика"], "confirm_min_score": 85},
+            {"olympiad": "Физтех", "benefit": "score100", "diploma": "winner", "profiles": ["физика"],
+             "programs": ["03.03.02 Физика"]},
+        ])
+        u = parse_file(data, self.c)
+        fiztech = u.rules[0].olympiad
+        text = texts.olympiad_benefits(fiztech, [(u, u.rules)], 2027)
+        self.assertIn("🏅 БВИ — победителям и призёрам: математика (2 программы)", text)
+        self.assertIn("💯 100 баллов — победителям: физика (03.03.02 Физика)", text)
+        self.assertIn("ЕГЭ от 75 до 85 — смотря по программе · часть льгот — и за 10 класс", text)
 
     def test_empty_and_vsosh(self):
         o = self.c.search("ломоносов")[0].olympiad

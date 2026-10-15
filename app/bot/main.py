@@ -212,10 +212,32 @@ class Views:
         return kb.as_markup()
 
     def olympiad_benefits(self, o: CatalogOlympiad, nav: Nav) -> Screen:
-        text = texts.olympiad_benefits(o, self.benefits.for_olympiad(o.id), self.admission_year)
+        entries = self.benefits.for_olympiad(o.id)
+        text = texts.olympiad_benefits(o, entries, self.admission_year)
         kb = InlineKeyboardBuilder()
+        unis = self.benefits.latest()
+        buttons = [InlineKeyboardButton(text=f"📄 {u.university}", callback_data=Nav(
+            a="benu", o=o.id, q=nav.q, p=nav.p, b=nav.b, d=unis.index(u)).pack()) for u, _ in entries]
+        for i in range(0, len(buttons), 2):
+            kb.row(*buttons[i:i + 2])
         kb.row(InlineKeyboardButton(text="◀️ К олимпиаде", callback_data=Nav(
             a="card", o=o.id, q=nav.q, p=nav.p, b=nav.b, d=nav.d).pack()),
+            InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+        return text, kb.as_markup()
+
+    def olympiad_university(self, o: CatalogOlympiad, nav: Nav) -> Screen | None:
+        """Льготы олимпиады в одном вузе (индекс вуза — в nav.d)."""
+        unis = self.benefits.latest()
+        if not 0 <= nav.d < len(unis):
+            return None
+        u = unis[nav.d]
+        rules = [r for r in u.rules if r.olympiad.id == o.id]
+        if not rules:
+            return None
+        text = texts.olympiad_university_benefits(o, u, rules, self.admission_year)
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="◀️ Ко всем вузам", callback_data=Nav(
+            a="ben", o=o.id, q=nav.q, p=nav.p, b=nav.b).pack()),
             InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
         return text, kb.as_markup()
 
@@ -353,7 +375,7 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await callback.answer("Поиск устарел, отправь запрос заново.", show_alert=True)
                 return
             await show(callback, screen)
-        elif nav.a in ("card", "sub", "unsub", "ben"):
+        elif nav.a in ("card", "sub", "unsub", "ben", "benu"):
             o = catalog.get(nav.o)
             if o is None:
                 await callback.answer("Олимпиада не найдена — перечень обновился. Поищи её заново.", show_alert=True)
@@ -362,6 +384,12 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await show(callback, views.card(o, user_id, nav))
             elif nav.a == "ben":
                 await show(callback, views.olympiad_benefits(o, nav))
+            elif nav.a == "benu":
+                screen = views.olympiad_university(o, nav)
+                if screen is None:
+                    await stale_button(callback)
+                    return
+                await show(callback, screen)
             else:
                 await toggle_subscription(callback, o, nav)
                 return

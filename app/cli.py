@@ -133,6 +133,55 @@ def cmd_benefits_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_import_hse(args: argparse.Namespace) -> int:
+    import json
+    import re
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.hse_benefits import parse_hse_table
+
+    source = args.source
+    if source.startswith("http"):
+        from app.fetch import fetch_bytes
+
+        data = fetch_bytes(source)
+    else:
+        data = Path(source).read_bytes()
+    table = parse_hse_table(data)
+    catalog = _catalog()
+    rules, problems = resolve_import(table.rules, catalog)
+    year = int(m.group(1)) if (m := re.search(r"в (20\d\d) году", table.title)) else args.year
+    doc = {
+        "university": args.name,
+        "full_name": "Национальный исследовательский университет «Высшая школа экономики»"
+                     + (f" — {args.campus}" if args.campus and args.campus != "Москва" else ""),
+        "city": args.campus or "Москва",
+        "admission_year": year,
+        "document_status": "approved",
+        "source_url": args.page,
+        "source_title": table.title or "Особые права при приёме в НИУ ВШЭ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Льгота действует, если в год написания олимпиада и её профиль входили в перечень Минобрнауки.",
+            "Минимальный балл ЕГЭ для подтверждения — не ниже указанного в правиле (обычно 75).",
+        ] + ([f"Ещё {table.skipped_generic} правил «для всех олимпиад перечня» (гуманитарные программы) "
+              "пока не показаны — смотрите таблицу ВШЭ."] if table.skipped_generic else []),
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)  # та же проверка, что при загрузке бота
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок таблицы: {table.rows}, программ: {table.programs}, правил: {len(table.rules)}, "
+          f"сохранено: {len(rules)}, пропущено общих: {table.skipped_generic}")
+    print(f"Записано: {args.out}")
+    if problems:
+        print(f"\nНе сопоставлено ({len(problems)}) — эти правила не сохранены:")
+        for p in problems:
+            print(f"  ? {p}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -302,6 +351,14 @@ def build_parser() -> argparse.ArgumentParser:
     ben = groups.add_parser("benefits", help="льготы вузов").add_subparsers(dest="command", required=True)
     p = ben.add_parser("check", help="проверить файлы benefits/*.json")
     p.set_defaults(func=cmd_benefits_check)
+    p = ben.add_parser("import-hse", help="импорт таблицы особых прав ВШЭ (xlsx: ссылка или файл)")
+    p.add_argument("source")
+    p.add_argument("--out", required=True, help="куда записать, например benefits/hse_moscow_2026.json")
+    p.add_argument("--name", default="ВШЭ", help="короткое имя в боте (ВШЭ, ВШЭ — СПб, …)")
+    p.add_argument("--campus", default="Москва")
+    p.add_argument("--year", type=int, default=2026, help="год приёма, если его нет в заголовке таблицы")
+    p.add_argument("--page", default="https://www.hse.ru/docs/1130197982.html", help="страница документа")
+    p.set_defaults(func=cmd_benefits_import_hse)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")

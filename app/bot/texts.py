@@ -456,8 +456,56 @@ def _conditions(r: Rule) -> str | None:
     return " · ".join(parts) or None
 
 
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} {one}"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} {few}"
+    return f"{n} {many}"
+
+
+def _summary(rules: list[Rule]) -> list[str]:
+    """Сводка правил одного вуза: «🏅 БВИ — победителям и призёрам: математика (10 программ), физика (2)»."""
+    groups: dict[tuple[str, str], dict[str, set[str] | None]] = {}
+    for r in rules:
+        by_profile = groups.setdefault((r.benefit, r.diploma), {})
+        for profile in r.profiles or ["любой профиль"]:
+            if r.programs is None:
+                by_profile[profile] = None
+            elif by_profile.get(profile, set()) is not None:
+                by_profile.setdefault(profile, set()).update(r.programs)
+    lines = []
+    for (benefit, diploma) in sorted(groups, key=lambda k: (k[0] != "bvi", k[1] != "any")):
+        parts = []
+        for profile, programs in sorted(groups[(benefit, diploma)].items()):
+            label = escape(profile)
+            if programs:
+                label += f" ({_plural(len(programs), 'программа', 'программы', 'программ')})" if len(programs) > 1 \
+                    else f" ({escape(next(iter(programs)))})"
+            parts.append(label)
+        lines.append(f"{BENEFIT_ICONS[benefit]} {BENEFIT_TYPES[benefit]} — {DIPLOMAS[diploma]}: " + "; ".join(parts))
+    scores = sorted({r.confirm_min_score for r in rules if r.confirm_min_score})
+    conditions = []
+    if scores:
+        conditions.append(f"ЕГЭ от {scores[0]}" if len(scores) == 1 else f"ЕГЭ от {scores[0]} до {scores[-1]} — смотря по программе")
+    elif any(r.olympiad.is_vsosh for r in rules):
+        conditions.append("без условия по ЕГЭ")
+    grades = {g for r in rules for g in (r.grades or [])}
+    if grades == {11}:
+        conditions.append("диплом за 11 класс")
+    elif 10 in grades:
+        conditions.append("часть льгот — и за 10 класс")
+    since = {r.diploma_since for r in rules if r.diploma_since}
+    if since:
+        conditions.append(f"диплом не раньше {min(since)} года")
+    if conditions:
+        lines.append(f"      <i>{escape(' · '.join(conditions))}</i>")
+    return lines
+
+
 def olympiad_benefits(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, list[Rule]]],
                       admission_year: int) -> str:
+    """Сводка льгот олимпиады по всем вузам."""
     name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
     if not entries:
         return (f"🎓 <b>Льготы: «{name}»</b>\n\nПока нет данных ни по одному вузу из тех, что мы собрали. "
@@ -465,15 +513,30 @@ def olympiad_benefits(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits
     lines = [f"🎓 <b>Льготы: «{name}»</b>", ""]
     for u, rules in entries:
         lines.append(f"<b>{escape(u.university)}</b> — <i>{u.status_label(admission_year)}</i>")
-        for r in rules:
-            lines.append(_rule_line(r))
-            extra = [c for c in (_conditions(r), r.note) if c]
-            if extra:
-                lines.append(f"      <i>{escape(' · '.join(extra))}</i>")
+        lines += _summary(rules)
         if u.is_draft and u.notes:
             lines.append(f"⚠️ <i>{escape(u.notes[0])}</i>")
         lines.append("")
-    lines.append("<i>Всегда сверяй с правилами приёма вуза — ссылка в карточке вуза.</i>")
+    lines.append("<i>Программы и точные условия — кнопкой вуза ниже. Всегда сверяй с правилами приёма вуза.</i>")
+    return _fit(lines)
+
+
+def olympiad_university_benefits(o: CatalogOlympiad, u: UniversityBenefits, rules: list[Rule],
+                                 admission_year: int) -> str:
+    """Все правила одного вуза для олимпиады — со списками программ."""
+    name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
+    lines = [f"🎓 <b>{escape(u.university)}: «{name}»</b>", f"<i>{u.status_label(admission_year)}</i>", ""]
+    order = sorted(rules, key=lambda r: (r.benefit != "bvi", (r.profiles or [""])[0], r.diploma != "any"))
+    for r in order:
+        lines.append(_rule_line(r).split("\n")[0])
+        extra = [c for c in (_conditions(r), r.note) if c]
+        if extra:
+            lines.append(f"      <i>{escape(' · '.join(extra))}</i>")
+        if r.programs:
+            lines.append("      " + escape("; ".join(r.programs)))
+        elif r.programs is None and not r.olympiad.is_vsosh:
+            lines.append("      <i>направления — по профилю олимпиады</i>")
+    lines += ["", f'Источник: <a href="{escape(u.source_url, quote=True)}">{escape(u.source_title or u.source_url)}</a>']
     return _fit(lines)
 
 

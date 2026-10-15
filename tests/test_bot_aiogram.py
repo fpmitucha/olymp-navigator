@@ -295,7 +295,11 @@ class BotFlowTest(unittest.TestCase):
         card = self.sent(self.feed(self.message("Физтех")))[0]
         benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
         self.assertIn("🎓 <b>Льготы: «Физтех»</b>", benefits.text)
-        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", benefits.text)
+        self.assertIn("🏅 БВИ — победителям: математика", benefits.text)
+        detail = self.only_edit(self.feed(self.callback(self.button(benefits, "📄 Тестовый вуз"))))
+        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", detail.text)
+        again = self.only_edit(self.feed(self.callback(self.button(detail, "◀️ Ко всем вузам"))))
+        self.assertEqual(again.text, benefits.text)
         back = self.only_edit(self.feed(self.callback(self.button(benefits, "◀️ К олимпиаде"))))
         self.assertTrue(back.text.startswith("<b>Физтех</b>"))
 

@@ -109,6 +109,27 @@ def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
     return hits[0].olympiad if len(hits) == 1 else None
 
 
+def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], list[str]]:
+    """Для импорта таблиц вузов: оставляет правила, чьи олимпиада и профиль нашлись в каталоге.
+    Названия профилей приводятся к написанию каталога (регистр, «ё»). Возвращает (правила, проблемы)."""
+    kept, problems = [], []
+    for rule in rules:
+        olympiad = _resolve(catalog, rule["olympiad"])
+        if olympiad is None:
+            problems.append(f"олимпиада не найдена: «{rule['olympiad']}»")
+            continue
+        profiles = rule.get("profiles")
+        if profiles:
+            by_norm = {p.lower().replace("ё", "е"): p for p in olympiad.profiles}
+            fixed = [by_norm.get(p.lower().replace("ё", "е")) for p in profiles]
+            if None in fixed:
+                problems.append(f"профиль {profiles} не найден у «{olympiad.name}»; есть: {sorted(olympiad.profiles)}")
+                continue
+            rule = {**rule, "profiles": fixed}
+        kept.append(rule)
+    return kept, sorted(set(problems))
+
+
 def _list_of(value, kind, where: str, errors: list[str]):
     if value is None:
         return None
