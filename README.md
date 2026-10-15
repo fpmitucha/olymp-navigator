@@ -88,7 +88,19 @@ python -m app.cli rsr parse saved.html --url https://rsr-olymp.ru/archive/2025
    python -m app.cli bot run        # на Windows: py -m app.cli bot run
    ```
 
-Бот работает, пока открыто окно консоли; остановка — Ctrl+C. Подписки хранятся
+Бот работает, пока открыто окно консоли; остановка — Ctrl+C.
+
+**Если бот получает сообщения, но не отвечает** (в консоли `TelegramNetworkError: Request timeout`):
+
+```bash
+python -m app.cli bot check
+```
+
+Команда проверит связь с Telegram по IPv4 и IPv6 и подскажет, что делать. По умолчанию бот
+ходит только по IPv4 (`TELEGRAM_FORCE_IPV4=1`): у многих провайдеров IPv6-маршрут до Telegram
+«висит». Если провайдер замедляет Telegram, нужен прокси: `pip install aiohttp-socks` и в `.env`
+`TELEGRAM_PROXY=http://логин:пароль@host:port` (или `socks5://…`). Надёжнее всего — запустить
+бота на сервере за пределами этой сети. Подписки хранятся
 в `data/bot.sqlite3`. После скачивания нового перечня бота нужно перезапустить.
 
 Что умеет бот:

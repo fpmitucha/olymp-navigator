@@ -34,6 +34,10 @@ class Settings:
     request_timeout: float = float(os.environ.get("REQUEST_TIMEOUT", "30"))
     data_dir: Path = Path(os.environ.get("DATA_DIR", PROJECT_ROOT / "data"))
     telegram_bot_token: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    # Прокси для Telegram, если провайдер его замедляет: http://user:pass@host:port или socks5://host:port
+    telegram_proxy: str = os.environ.get("TELEGRAM_PROXY", "")
+    # Ходить в Telegram только по IPv4: у многих провайдеров IPv6-маршрут до Telegram «висит»
+    telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")
     bot_db_path: Path = Path(os.environ.get("BOT_DB_PATH", Path(os.environ.get("DATA_DIR", PROJECT_ROOT / "data")) / "bot.sqlite3"))
 
 

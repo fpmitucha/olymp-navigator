@@ -9,6 +9,7 @@
     python -m app.cli rsr sql data/rsr/rsr_2026-27.json > load.sql
     python -m app.cli vsosh load --year 2026/27
     python -m app.cli bot run
+    python -m app.cli bot check
     python -m app.cli stages import stages.csv
     python -m app.cli stages list
 """
@@ -129,12 +130,19 @@ def cmd_bot_run(args: argparse.Namespace) -> int:
     print(f"Каталог: {len(catalog.olympiads)} олимпиад, годы {', '.join(catalog.years)}. База бота: {settings.bot_db_path}")
     print("Бот запущен, остановка — Ctrl+C")
     try:
-        asyncio.run(run(token, catalog, storage))
+        asyncio.run(run(token, catalog, storage, proxy=settings.telegram_proxy,
+                        force_ipv4=settings.telegram_force_ipv4))
     except KeyboardInterrupt:
         pass
     finally:
         storage.close()
     return 0
+
+
+def cmd_bot_check(args: argparse.Namespace) -> int:
+    from app.bot.netcheck import run_check
+
+    return run_check(settings.telegram_bot_token, settings.telegram_proxy)
 
 
 def cmd_stages_import(args: argparse.Namespace) -> int:
@@ -229,6 +237,8 @@ def build_parser() -> argparse.ArgumentParser:
     bot = groups.add_parser("bot", help="Telegram-бот").add_subparsers(dest="command", required=True)
     p = bot.add_parser("run", help="запустить бота")
     p.set_defaults(func=cmd_bot_run)
+    p = bot.add_parser("check", help="проверить связь с Telegram")
+    p.set_defaults(func=cmd_bot_check)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")

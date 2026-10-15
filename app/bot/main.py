@@ -12,11 +12,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import socket
 from datetime import date
 from typing import Callable
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import (
     TelegramBadRequest,
@@ -311,12 +313,27 @@ def build_dispatcher(catalog: Catalog, storage: Storage, today: Callable[[], dat
     return dp
 
 
-def make_bot(token: str) -> Bot:
-    return Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
+def make_bot(token: str, proxy: str = "", force_ipv4: bool = True) -> Bot:
+    """Бот с настройками соединения.
+
+    force_ipv4: у многих провайдеров IPv6-маршрут до Telegram «висит» — опрос при этом
+    работает, а ответы падают с «Request timeout». Принудительный IPv4 это лечит.
+    proxy: http(s):// или socks5:// — если провайдер замедляет Telegram (нужен пакет aiohttp-socks).
+    """
+    if proxy:
+        session = AiohttpSession(proxy=proxy)
+    else:
+        session = AiohttpSession()
+        if force_ipv4:
+            session._connector_init["family"] = socket.AF_INET  # noqa: SLF001 — у aiogram нет публичной настройки
+    return Bot(token, session=session,
+               default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
 
 
-async def run(token: str, catalog: Catalog, storage: Storage) -> None:
-    bot = make_bot(token)
+async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", force_ipv4: bool = True) -> None:
+    bot = make_bot(token, proxy=proxy, force_ipv4=force_ipv4)
+    log.info("Соединение с Telegram: %s", f"через прокси {proxy.split('@')[-1]}" if proxy
+             else ("только IPv4" if force_ipv4 else "IPv4 и IPv6"))
     dp = build_dispatcher(catalog, storage)
     await bot.set_my_commands([
         BotCommand(command="start", description="Меню"),

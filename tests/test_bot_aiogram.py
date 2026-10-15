@@ -245,6 +245,16 @@ class BotFlowTest(unittest.TestCase):
         calls = self.feed(self.callback(self.nav(a="help")))
         self.assertIn("Как пользоваться", self.sent(calls)[0].text)
 
+    def test_make_bot_connection_options(self):
+        import socket
+
+        from app.bot.main import make_bot
+
+        bot = make_bot("42:TEST")
+        self.assertEqual(bot.session._connector_init["family"], socket.AF_INET)
+        bot = make_bot("42:TEST", force_ipv4=False)
+        self.assertNotIn("family", bot.session._connector_init)
+
     def test_sender_translates_errors(self):
         from aiogram.exceptions import TelegramForbiddenError
 
