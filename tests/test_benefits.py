@@ -1,0 +1,123 @@
+"""Льготы вузов: формат файлов, проверка, выборка, тексты."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from app.benefits import BenefitsError, load_benefits, parse_file
+from app.bot import texts
+from app.config import PROJECT_ROOT
+from tests.helpers import sample_catalog
+
+
+def university(**overrides):
+    data = {
+        "university": "Тестовый вуз", "full_name": "Тестовый университет", "city": "Москва",
+        "admission_year": 2027, "document_status": "approved",
+        "source_url": "https://example.edu/olymp", "source_title": "Особые права", "checked_at": "2026-10-15",
+        "notes": ["Нужен ЕГЭ от 75."],
+        "defaults": {"confirm_min_score": 75, "grades": [11]},
+        "rules": [
+            {"olympiad": "Физтех", "benefit": "bvi", "diploma": "winner", "profiles": ["математика"], "levels": [1]},
+            {"olympiad": "Олимпиада школьников «Физтех»", "benefit": "score100", "diploma": "prize"},
+            {"olympiad": "ВсОШ", "benefit": "bvi", "diploma": "any", "confirm_min_score": None, "grades": None},
+        ],
+    }
+    data.update(overrides)
+    return data
+
+
+class ParseTest(unittest.TestCase):
+    def setUp(self):
+        self.c = sample_catalog()
+
+    def test_valid(self):
+        u = parse_file(university(), self.c, "test.json")
+        self.assertEqual(len(u.rules), 3)
+        bvi = u.rules[0]
+        self.assertEqual((bvi.benefit, bvi.diploma, bvi.profiles, bvi.levels), ("bvi", "winner", ["математика"], [1]))
+        self.assertEqual((bvi.confirm_min_score, bvi.grades), (75, [11]))  # из defaults
+        self.assertIs(u.rules[1].olympiad, bvi.olympiad)                   # разные написания — одна олимпиада
+        vsosh = u.rules[2]
+        self.assertTrue(vsosh.olympiad.is_vsosh)
+        self.assertIsNone(vsosh.confirm_min_score)                         # правило переопределило defaults
+
+    def test_errors_are_collected(self):
+        data = university(document_status="final", rules=[
+            {"olympiad": "Несуществующая олимпиада", "benefit": "bvi"},
+            {"olympiad": "Физтех", "benefit": "free", "diploma": "everyone"},
+            {"olympiad": "Физтех", "benefit": "bvi", "profiles": ["астрология"], "levels": [4]},
+            {"olympiad": "Физтех", "benefit": "bvi", "confirm_min_score": 150},
+        ])
+        with self.assertRaises(BenefitsError) as ctx:
+            parse_file(data, self.c, "bad.json")
+        message = str(ctx.exception)
+        for fragment in ("document_status", "не найдена", "benefit", "diploma", "астрология", "уровни",
+                         "confirm_min_score"):
+            self.assertIn(fragment, message)
+
+    def test_missing_fields(self):
+        with self.assertRaises(BenefitsError) as ctx:
+            parse_file({"rules": []}, self.c, "empty.json")
+        self.assertIn("university", str(ctx.exception))
+
+    def test_latest_year_wins_and_lookup(self):
+        folder = Path(tempfile.mkdtemp())
+        (folder / "a_2026.json").write_text(json.dumps(university(admission_year=2026)), encoding="utf-8")
+        (folder / "a_2027.json").write_text(json.dumps(university(document_status="draft")), encoding="utf-8")
+        b = load_benefits(folder, self.c)
+        latest = b.latest()
+        self.assertEqual([(u.university, u.admission_year) for u in latest], [("Тестовый вуз", 2027)])
+        fiztech = self.c.search("физтех")[0].olympiad
+        entries = b.for_olympiad(fiztech.id)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(entries[0][1]), 2)
+        self.assertEqual(latest[0].status_label(2027), "приём 2027, проект")
+        self.assertEqual(parse_file(university(admission_year=2026), self.c).status_label(2027),
+                         "приём 2026 — прошлый год")
+
+    def test_repository_files_are_valid(self):
+        """Файлы в benefits/ должны проходить проверку против настоящего каталога."""
+        rsr = PROJECT_ROOT / "data" / "rsr"
+        if not list(rsr.glob("rsr_*.json")):
+            self.skipTest("нет скачанных перечней в data/rsr")
+        from app.catalog import Catalog
+
+        load_benefits(PROJECT_ROOT / "benefits", Catalog.load(rsr))
+
+
+class TextsTest(unittest.TestCase):
+    def setUp(self):
+        self.c = sample_catalog()
+        self.u = parse_file(university(), self.c, "test.json")
+
+    def test_olympiad_view(self):
+        fiztech = self.c.search("физтех")[0].olympiad
+        rules = [r for r in self.u.rules if r.olympiad is fiztech]
+        text = texts.olympiad_benefits(fiztech, [(self.u, rules)], 2027)
+        self.assertIn("<b>Тестовый вуз</b> — <i>приём 2027</i>", text)
+        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", text)
+        self.assertIn("💯 100 баллов — призёрам", text)
+        self.assertIn("ЕГЭ от 75 по предмету профиля · диплом за 11 класс", text)
+
+    def test_empty_and_vsosh(self):
+        o = self.c.search("ломоносов")[0].olympiad
+        self.assertIn("Пока нет данных", texts.olympiad_benefits(o, [], 2027))
+        vsosh = self.c.search("всош")[0].olympiad
+        text = texts.olympiad_benefits(vsosh, [(self.u, [self.u.rules[2]])], 2027)
+        self.assertIn("без условия по ЕГЭ", text)
+
+    def test_university_view(self):
+        text = texts.university_benefits(self.u, 2027)
+        self.assertIn("🏅 <b>БВИ — победителям</b> (1):\nФизтех (математика)", text)
+        self.assertIn("💯 <b>100 баллов — призёрам</b> (1):\nФизтех", text)
+        self.assertIn('href="https://example.edu/olymp"', text)
+        old = parse_file(university(admission_year=2026), self.c)
+        self.assertIn("это данные прошлого года", texts.university_benefits(old, 2027))
+
+
+if __name__ == "__main__":
+    unittest.main()

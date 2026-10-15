@@ -110,6 +110,29 @@ def _catalog():
         raise SystemExit(str(exc)) from exc
 
 
+def _benefits(catalog, strict: bool = True):
+    from app.benefits import BenefitsCatalog, BenefitsError, load_benefits
+    from app.config import PROJECT_ROOT
+
+    try:
+        return load_benefits(PROJECT_ROOT / "benefits", catalog)
+    except BenefitsError as exc:
+        if strict:
+            raise SystemExit(f"Ошибки в файлах льгот:\n{exc}") from exc
+        print(f"⚠️ Льготы не загружены, ошибки в файлах benefits/:\n{exc}", file=sys.stderr)
+        return BenefitsCatalog()
+
+
+def cmd_benefits_check(args: argparse.Namespace) -> int:
+    catalog = _catalog()
+    benefits = _benefits(catalog)
+    for u in benefits.universities:
+        bvi = sum(r.benefit == "bvi" for r in u.rules)
+        print(f"✓ {u.file}: {u.university}, приём {u.admission_year}, {u.document_status}, "
+              f"правил {len(u.rules)} (БВИ {bvi}, 100 баллов {len(u.rules) - bvi})")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -127,12 +150,15 @@ def cmd_bot_run(args: argparse.Namespace) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     catalog = _catalog()
+    benefits = _benefits(catalog, strict=False)
     storage = Storage(settings.bot_db_path)
-    print(f"Каталог: {len(catalog.olympiads)} олимпиад, годы {', '.join(catalog.years)}. База бота: {settings.bot_db_path}")
+    print(f"Каталог: {len(catalog.olympiads)} олимпиад, годы {', '.join(catalog.years)}. "
+          f"Льготы: {len(benefits.latest())} вузов. База бота: {settings.bot_db_path}")
     print("Бот запущен, остановка — Ctrl+C")
     try:
         asyncio.run(run(token, catalog, storage, proxy=settings.telegram_proxy,
-                        force_ipv4=settings.telegram_force_ipv4, stages_autosync=settings.stages_autosync))
+                        force_ipv4=settings.telegram_force_ipv4, stages_autosync=settings.stages_autosync,
+                        benefits=benefits))
     except KeyboardInterrupt:
         pass
     finally:
@@ -272,6 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_bot_run)
     p = bot.add_parser("check", help="проверить связь с Telegram")
     p.set_defaults(func=cmd_bot_check)
+
+    ben = groups.add_parser("benefits", help="льготы вузов").add_subparsers(dest="command", required=True)
+    p = ben.add_parser("check", help="проверить файлы benefits/*.json")
+    p.set_defaults(func=cmd_benefits_check)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")

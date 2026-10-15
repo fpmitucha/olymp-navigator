@@ -34,6 +34,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot import texts
 from app.bot.notifier import TemporaryError, UserBlocked, moscow_now, reminder_loop, stages_sync_loop
 from app.bot.storage import Storage
+from app.benefits import BenefitsCatalog
 from app.catalog import Catalog, CatalogOlympiad
 
 log = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class Nav(CallbackData, prefix="n"):
     """Данные кнопок. Вся навигация — через этот класс (лимит Telegram 64 байта).
 
     a — действие: menu, help, subs, lvl (список уровня), vsosh, page (результаты поиска),
-        card, sub, unsub, noop
+        card, sub, unsub, ben (льготы олимпиады), unis (список вузов), uni (вуз), noop
     o — id олимпиады; q — id сохранённого запроса или номер уровня; p — страница списка
     b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "l" — список уровня,
         "u" — подписки
@@ -69,10 +70,17 @@ Screen = tuple[str, InlineKeyboardMarkup]
 class Views:
     """Экраны бота: текст + кнопки. Не отправляют сообщения сами."""
 
-    def __init__(self, catalog: Catalog, storage: Storage, today: Callable[[], date]):
+    def __init__(self, catalog: Catalog, storage: Storage, today: Callable[[], date],
+                 benefits: BenefitsCatalog | None = None):
         self.catalog = catalog
         self.storage = storage
         self.today = today
+        self.benefits = benefits or BenefitsCatalog()
+
+    @property
+    def admission_year(self) -> int:
+        """Ближайший приём: учебный год 2026/27 — приём летом 2027."""
+        return int(self.catalog.current_year[:4]) + 1
 
     # -- подписки -------------------------------------------------------------
 
@@ -97,6 +105,7 @@ class Views:
             count = len(self.level_items(level))
             kb.button(text=f"{texts.LEVEL_ICONS[level]} уровень · {count}", callback_data=Nav(a="lvl", q=level))
         kb.button(text="🏆 ВсОШ", callback_data=Nav(a="vsosh"))
+        kb.button(text="🎓 Вузы", callback_data=Nav(a="unis"))
         kb.button(text="🔔 Подписки", callback_data=Nav(a="subs"))
         kb.button(text="ℹ️ Помощь", callback_data=Nav(a="help"))
         kb.adjust(2)  # шашечкой: по две кнопки в ряд
@@ -186,6 +195,10 @@ class Views:
             row.append(InlineKeyboardButton(text="🌐 Сайт", url=o.websites[0]))
         if row:
             kb.row(*row)
+        count = len(self.benefits.for_olympiad(o.id))
+        if count:
+            kb.row(InlineKeyboardButton(text=f"🎓 Льготы в вузах · {count}",
+                                        callback_data=Nav(a="ben", **keep).pack()))
         if nav.b == "s":
             back = InlineKeyboardButton(text="◀️ К результатам", callback_data=Nav(a="page", q=nav.q, p=nav.p).pack())
         elif nav.b == "l":
@@ -197,6 +210,33 @@ class Views:
         menu = InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack())
         kb.row(*([back, menu] if back else [menu]))
         return kb.as_markup()
+
+    def olympiad_benefits(self, o: CatalogOlympiad, nav: Nav) -> Screen:
+        text = texts.olympiad_benefits(o, self.benefits.for_olympiad(o.id), self.admission_year)
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="◀️ К олимпиаде", callback_data=Nav(
+            a="card", o=o.id, q=nav.q, p=nav.p, b=nav.b, d=nav.d).pack()),
+            InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+        return text, kb.as_markup()
+
+    def universities(self) -> Screen:
+        unis = self.benefits.latest()
+        kb = InlineKeyboardBuilder()
+        for index, u in enumerate(unis):
+            kb.button(text=texts.left_align(u.university), callback_data=Nav(a="uni", q=index))
+        kb.button(text="🏠 Меню", callback_data=Nav(a="menu"))
+        kb.adjust(1)
+        return texts.universities_list(unis, self.admission_year), kb.as_markup()
+
+    def university(self, index: int) -> Screen | None:
+        unis = self.benefits.latest()
+        if not 0 <= index < len(unis):
+            return None
+        kb = InlineKeyboardBuilder()
+        kb.button(text="◀️ К вузам", callback_data=Nav(a="unis"))
+        kb.button(text="🏠 Меню", callback_data=Nav(a="menu"))
+        kb.adjust(2)
+        return texts.university_benefits(unis[index], self.admission_year), kb.as_markup()
 
     def search(self, query: str, telegram_id: int) -> Screen:
         """Экран после поиска: одна олимпиада — сразу карточка, иначе список."""
@@ -244,9 +284,10 @@ async def show(callback: CallbackQuery, screen: Screen) -> None:
     await callback.bot.send_message(callback.from_user.id, text, reply_markup=markup)
 
 
-def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date]) -> Router:
+def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
+                 benefits: BenefitsCatalog | None = None) -> Router:
     router = Router(name="olymp")
-    views = Views(catalog, storage, today)
+    views = Views(catalog, storage, today, benefits)
 
     @router.message(CommandStart())
     async def start(message: Message) -> None:
@@ -292,6 +333,14 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date]) 
             await show(callback, views.subs(user_id))
         elif nav.a == "lvl" and nav.q in LEVELS:
             await show(callback, views.level_list(nav.q, nav.p))
+        elif nav.a == "unis":
+            await show(callback, views.universities())
+        elif nav.a == "uni":
+            screen = views.university(nav.q)
+            if screen is None:
+                await stale_button(callback)
+                return
+            await show(callback, screen)
         elif nav.a == "vsosh":
             vsosh = next((o for o in catalog.olympiads.values() if o.is_vsosh), None)
             if vsosh is None:
@@ -304,13 +353,15 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date]) 
                 await callback.answer("Поиск устарел, отправь запрос заново.", show_alert=True)
                 return
             await show(callback, screen)
-        elif nav.a in ("card", "sub", "unsub"):
+        elif nav.a in ("card", "sub", "unsub", "ben"):
             o = catalog.get(nav.o)
             if o is None:
                 await callback.answer("Олимпиада не найдена — перечень обновился. Поищи её заново.", show_alert=True)
                 return
             if nav.a == "card":
                 await show(callback, views.card(o, user_id, nav))
+            elif nav.a == "ben":
+                await show(callback, views.olympiad_benefits(o, nav))
             else:
                 await toggle_subscription(callback, o, nav)
                 return
@@ -362,9 +413,10 @@ def make_sender(bot: Bot):
     return send
 
 
-def build_dispatcher(catalog: Catalog, storage: Storage, today: Callable[[], date] | None = None) -> Dispatcher:
+def build_dispatcher(catalog: Catalog, storage: Storage, today: Callable[[], date] | None = None,
+                     benefits: BenefitsCatalog | None = None) -> Dispatcher:
     dp = Dispatcher()
-    dp.include_router(build_router(catalog, storage, today or (lambda: moscow_now().date())))
+    dp.include_router(build_router(catalog, storage, today or (lambda: moscow_now().date()), benefits))
     return dp
 
 
@@ -386,11 +438,11 @@ def make_bot(token: str, proxy: str = "", force_ipv4: bool = True) -> Bot:
 
 
 async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", force_ipv4: bool = True,
-              stages_autosync: bool = True) -> None:
+              stages_autosync: bool = True, benefits: BenefitsCatalog | None = None) -> None:
     bot = make_bot(token, proxy=proxy, force_ipv4=force_ipv4)
     log.info("Соединение с Telegram: %s", f"через прокси {proxy.split('@')[-1]}" if proxy
              else ("только IPv4" if force_ipv4 else "IPv4 и IPv6"))
-    dp = build_dispatcher(catalog, storage)
+    dp = build_dispatcher(catalog, storage, benefits=benefits)
     await bot.set_my_commands([
         BotCommand(command="start", description="Меню"),
         BotCommand(command="subs", description="Мои подписки"),

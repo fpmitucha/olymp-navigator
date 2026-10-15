@@ -70,7 +70,11 @@ class BotFlowTest(unittest.TestCase):
         self.addCleanup(self.storage.close)
         self.session = FakeSession()
         self.bot = Bot("42:TEST", session=self.session)
-        self.dp = build_dispatcher(self.catalog, self.storage, today=lambda: TODAY)
+        from app.benefits import BenefitsCatalog, parse_file
+        from tests.test_benefits import university
+
+        self.benefits = BenefitsCatalog([parse_file(university(), self.catalog, "test.json")])
+        self.dp = build_dispatcher(self.catalog, self.storage, today=lambda: TODAY, benefits=self.benefits)
         self.update_id = 0
 
     # -- helpers ---------------------------------------------------------------
@@ -135,9 +139,9 @@ class BotFlowTest(unittest.TestCase):
         # в тестовом перечне 2026/27: 1 ур. — Физтех, Ломоносов, «Архитектура и искусство»;
         # 2 ур. — НТО, ОММО; 3 ур. — НТО, ОММО
         self.assertEqual(labels, ["1️⃣ уровень · 3", "2️⃣ уровень · 2", "3️⃣ уровень · 2",
-                                  "🏆 ВсОШ", "🔔 Подписки", "ℹ️ Помощь"])
+                                  "🏆 ВсОШ", "🎓 Вузы", "🔔 Подписки", "ℹ️ Помощь"])
         rows = [len(row) for row in calls[0].reply_markup.inline_keyboard]
-        self.assertEqual(rows, [2, 2, 2])
+        self.assertEqual(rows, [2, 2, 2, 1])
         self.assertEqual(self.storage.stats()["users"], 1)
 
     def test_olympiad_buttons_left_aligned(self):
@@ -175,7 +179,8 @@ class BotFlowTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0].text.startswith("<b>Физтех</b>"))
         labels = [label for label, _ in self.buttons(calls[0])]
-        self.assertEqual(labels, ["🔔 Подписаться на этапы", "📋 Подробнее", "🌐 Сайт", "🏠 Меню"])
+        self.assertEqual(labels, ["🔔 Подписаться на этапы", "📋 Подробнее", "🌐 Сайт",
+                                  "🎓 Льготы в вузах · 1", "🏠 Меню"])
 
     def test_results_card_and_back(self):
         results = self.sent(self.feed(self.message("физика")))[0]
@@ -285,6 +290,25 @@ class BotFlowTest(unittest.TestCase):
         self.session.edit_error = "Bad Request: message can't be edited"
         calls = self.feed(self.callback(self.nav(a="help")))
         self.assertIn("Как пользоваться", self.sent(calls)[0].text)
+
+    def test_benefits_screens(self):
+        card = self.sent(self.feed(self.message("Физтех")))[0]
+        benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
+        self.assertIn("🎓 <b>Льготы: «Физтех»</b>", benefits.text)
+        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", benefits.text)
+        back = self.only_edit(self.feed(self.callback(self.button(benefits, "◀️ К олимпиаде"))))
+        self.assertTrue(back.text.startswith("<b>Физтех</b>"))
+
+        robofest = self.sent(self.feed(self.message("Робофест")))[0]
+        self.assertNotIn("🎓", "".join(label for label, _ in self.buttons(robofest)))  # нет льгот — нет кнопки
+
+        unis = self.only_edit(self.feed(self.callback(self.nav(a="unis"))))
+        self.assertIn("🎓 <b>Вузы — 1</b>", unis.text)
+        uni = self.only_edit(self.feed(self.callback(self.button(unis, "Тестовый вуз"))))
+        self.assertIn("🏅 <b>БВИ — победителям</b>", uni.text)
+        self.assertEqual([label for label, _ in self.buttons(uni)], ["◀️ К вузам", "🏠 Меню"])
+        stale = self.feed(self.callback(self.nav(a="uni", q=99)))
+        self.assertTrue(next(c for c in stale if isinstance(c, AnswerCallbackQuery)).show_alert)
 
     def test_make_bot_connection_options(self):
         import socket
