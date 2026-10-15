@@ -131,6 +131,14 @@ def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
         hits = catalog.search(text, limit=2)
         if len(hits) == 1:
             return hits[0].olympiad
+    # «Олимпиада Вернадского (Междисциплинарная олимпиада …)» — без пояснения в скобках или по нему
+    for part in re.findall(r"^(.*?)\s*\((.+)\)\s*$", query):
+        for text in part:
+            found = catalog.find_one(text) or next(iter(
+                [h.olympiad for h in catalog.search(text, limit=2)] if len(catalog.search(text, limit=2)) == 1 else []
+            ), None)
+            if found:
+                return found
     # «Открытая олимпиада СКФУ «45 параллель»» — по тексту в кавычках
     quoted = re.findall(r"[«“\"]([^«»“”\"]{4,})[»”\"]", _fix_homoglyphs(query))
     if quoted:
