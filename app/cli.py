@@ -449,6 +449,52 @@ def cmd_benefits_import_reu(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_import_ranepa(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers import ranepa_benefits as ranepa
+
+    catalog = _catalog()
+    vsosh = next(o for o in catalog.olympiads.values() if o.is_vsosh)
+    imports = [
+        ranepa.parse_bvi_xlsx(Path(args.bvi).read_bytes()),
+        ranepa.parse_100_rows(ranepa.read_pdf_rows(args.score100)),
+        ranepa.parse_vsosh_rows(ranepa.read_pdf_rows(args.vsosh), sorted(vsosh.profiles)),
+    ]
+    raw = [r for i in imports for r in i.rules]
+    rules, problems = resolve_import(raw, catalog)
+    doc = {
+        "university": "РАНХиГС",
+        "full_name": "Российская академия народного хозяйства и государственной службы при Президенте РФ",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": "https://www.ranepa.ru/bakalavriat/olimpiady/",
+        "source_title": f"Поступление по олимпиаде — РАНХиГС, приём {args.year} (московский кампус)",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "БВИ — победителям и призёрам олимпиад РСОШ за 10–11 класс, ЕГЭ по профильному предмету от 75.",
+            "100 баллов — только за дипломы 11 класса; право можно использовать на нескольких программах.",
+            "ВсОШ (9–11 класс) — без условия по ЕГЭ. Данные по московскому кампусу; у филиалов свои списки.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"строк: {sum(i.rows for i in imports)}, правил: {len(raw)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    warnings = [w for i in imports for w in i.warnings]
+    for title, items in (("Не разобрано", warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -662,6 +708,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rsr-year", default="2025/26")
     p.add_argument("--url", default="https://www.rea.ru/mnt/sveden/document/priemDocLink/03_bak_Pravila_priema_pril_11.pdf")
     p.set_defaults(func=cmd_benefits_import_reu)
+    p = ben.add_parser("import-ranepa", help="импорт документов РАНХиГС: xlsx БВИ + PDF 100 баллов и ВсОШ")
+    p.add_argument("--bvi", default="data/ranepa_bvi_2026.xlsx")
+    p.add_argument("--score100", default="data/ranepa_100_2026.pdf")
+    p.add_argument("--vsosh", default="data/ranepa_vsosh_2026.pdf")
+    p.add_argument("--out", default="benefits/ranepa_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.set_defaults(func=cmd_benefits_import_ranepa)
     mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
     p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
     p.add_argument("source", nargs="?", default=mephi_url)

@@ -29,6 +29,7 @@ PROFILE_ALIASES = {
     "мхк": "искусство (мировая художественная культура)",
     "технология": "труд (технология)",
     "обж": "основы безопасности и защиты родины",
+    "информатика и икт": "информатика",
 }
 WILDCARD = "*"   # «любая олимпиада перечня» с нужным профилем / предметом и уровнем
 _ROMAN = {1: "I", 2: "II", 3: "III"}
@@ -146,6 +147,13 @@ def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
             ), None)
             if found:
                 return found
+    # «Твое призвание-финансист!» вместо «Твое призвание - финансист!» — почти совпадающее название
+    from app.catalog import normalize
+
+    names = {normalize(o.name): o for o in catalog.olympiads.values()}
+    close = difflib.get_close_matches(normalize(_fix_homoglyphs(query)), list(names), n=2, cutoff=0.95)
+    if len(close) == 1:
+        return names[close[0]]
     # «Открытая олимпиада СКФУ «45 параллель»» — по тексту в кавычках
     quoted = re.findall(r"[«“\"]([^«»“”\"]{4,})[»”\"]", _fix_homoglyphs(query))
     if quoted:
@@ -250,7 +258,15 @@ def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], lis
                 return None
 
             guessed: list[str] = []
-            fixed = [match(p) for p in profiles]
+            fixed = []
+            for p in profiles:
+                found = match(p)
+                if found is None and "," in p:  # «финансовая грамотность, экономика» — несколько профилей в ячейке
+                    parts = [match(x) for x in p.split(",") if x.strip()]
+                    if parts and None not in parts:
+                        fixed += parts
+                        continue
+                fixed.append(found)
             if None in fixed:
                 problems.append(f"профиль {profiles} не найден у «{olympiad.name}»; есть: {sorted(olympiad.profiles)}")
                 continue
