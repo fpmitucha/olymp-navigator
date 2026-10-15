@@ -1,7 +1,7 @@
 import unittest
 
 from app.parsers.msu_benefits import (
-    expand_wildcards, parse_benefits, parse_diploma, parse_levels, parse_msu_rows, split_olympiads,
+    parse_benefits, parse_diploma, parse_levels, parse_msu_rows, split_olympiads,
 )
 from tests.test_benefits import sample_catalog
 
@@ -53,15 +53,22 @@ class RowsTest(unittest.TestCase):
         wildcard = next(r for r in result.rules if r["olympiad"] == "*")
         self.assertEqual((wildcard["profiles"], wildcard["levels"], wildcard["benefit"]), (["физика"], [1, 2], "score100"))
 
-    def test_expand_wildcards(self):
+    def test_wildcard_rules_expand_on_load(self):
+        from app.benefits import parse_file, resolve_import
+
         catalog = sample_catalog()
-        year = catalog.current_year
-        rules = [{"olympiad": "*", "profiles": ["математика"], "levels": [1, 2, 3], "benefit": "score100"},
+        rules = [{"olympiad": "*", "profiles": ["математика"], "benefit": "score100", "programs": ["Мехмат"]},
+                 {"olympiad": "*", "subjects": ["Физика"], "levels": [1], "benefit": "bvi"},
                  {"olympiad": "*", "profiles": ["нет такого"], "levels": [1], "benefit": "score100"}]
-        out, problems = expand_wildcards(rules, catalog, year)
-        self.assertTrue(out)
-        self.assertTrue(all(r["olympiad"] != "*" and r["profiles"] for r in out))
+        kept, problems = resolve_import(rules, catalog)
+        self.assertEqual(len(kept), 2)
         self.assertEqual(len(problems), 1)
+        doc = {"university": "Т", "admission_year": 2026, "document_status": "approved",
+               "source_url": "https://x", "checked_at": "2026-10-15", "rules": kept}
+        u = parse_file(doc, catalog, "t.json")
+        self.assertTrue(u.rules)
+        self.assertTrue(all(r.wildcard and r.olympiad for r in u.rules))
+        self.assertIn("по профилю «математика»", u.rules[0].wildcard)
 
 
 if __name__ == "__main__":

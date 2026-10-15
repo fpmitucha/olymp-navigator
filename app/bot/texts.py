@@ -568,9 +568,12 @@ def university_benefits(u: UniversityBenefits, admission_year: int) -> str:
     lines.append("")
     groups: dict[tuple[str, str], list[str]] = {}
     for r in u.rules:
-        label = button_name(r.olympiad, 80)
-        if r.profiles:
-            label += f" ({', '.join(r.profiles)})"
+        if r.wildcard:
+            label = r.wildcard
+        else:
+            label = button_name(r.olympiad, 80)
+            if r.profiles:
+                label += f" ({', '.join(r.profiles)})"
         groups.setdefault((r.benefit, r.diploma), [])
         if label not in groups[(r.benefit, r.diploma)]:
             groups[(r.benefit, r.diploma)].append(label)

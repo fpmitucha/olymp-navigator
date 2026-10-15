@@ -193,13 +193,13 @@ def cmd_benefits_import_msu(args: argparse.Namespace) -> int:
     from datetime import date
 
     from app.benefits import parse_file, resolve_import
-    from app.parsers.msu_benefits import expand_wildcards, parse_msu_pdf
+    from app.parsers.msu_benefits import parse_msu_pdf
 
     table = parse_msu_pdf(args.source)
     catalog = _catalog()
     rsr_year = m.group(1) if (m := re.search(r"на (20\d\d/\d\d) учебный год", table.title)) else args.rsr_year
-    expanded, wildcard_problems = expand_wildcards(table.rules, catalog, rsr_year)
-    rules, problems = resolve_import(expanded, catalog)
+    rules, problems = resolve_import([{**r, "rsr_year": rsr_year} if r["olympiad"] == "*" else r
+                                      for r in table.rules], catalog)
     year = int(m.group(1)) if (m := re.search(r"в (20\d\d) году", table.title)) else args.year
     doc = {
         "university": "МГУ",
@@ -221,9 +221,9 @@ def cmd_benefits_import_msu(args: argparse.Namespace) -> int:
     parse_file(doc, catalog, args.out)
     Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"{table.title}\nфакультетов: {table.faculties}, строк: {table.rows}, правил: {len(table.rules)}, "
-          f"после раскрытия «*»: {len(expanded)}, сохранено: {len(rules)}")
+          f"сохранено: {len(rules)}")
     print(f"Записано: {args.out}")
-    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", wildcard_problems + problems)):
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
         if items:
             print(f"\n{title} ({len(items)}):")
             for p in items:
@@ -270,6 +270,46 @@ def cmd_benefits_import_mephi(args: argparse.Namespace) -> int:
     print(f"{table.title}\nстрок: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
     print(f"Записано: {args.out}")
     for title, items in (("Пропущено", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_spbu(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.spbu_benefits import parse_spbu_pdf
+
+    table = parse_spbu_pdf(args.source)
+    catalog = _catalog()
+    rules, problems = resolve_import([{**r, "rsr_year": args.rsr_year} if r["olympiad"] == "*" else r
+                                      for r in table.rules], catalog)
+    doc = {
+        "university": "СПбГУ",
+        "full_name": "Санкт-Петербургский государственный университет",
+        "city": "Санкт-Петербург",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": table.title or "Особые права при приёме в СПбГУ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Засчитываются дипломы только за 10 и 11 класс; право действует 4 года после олимпиады.",
+            "Нужен результат ВИ (ЕГЭ) не ниже указанного в правиле минимального балла.",
+            f"«Любая олимпиада перечня» — по перечню {args.rsr_year} учебного года.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
         if items:
             print(f"\n{title} ({len(items)}):")
             for p in items:
@@ -461,6 +501,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rsr-year", default="2025/26", help="учебный год перечня для «*»")
     p.add_argument("--url", default="https://cpk.msu.ru/files/2026/olymp_benefits.pdf")
     p.set_defaults(func=cmd_benefits_import_msu)
+    p = ben.add_parser("import-spbu", help="импорт PDF особых прав СПбГУ (нужен pdfplumber)")
+    p.add_argument("source", help="путь к bac_spec_olymp_2_<год>.pdf")
+    p.add_argument("--out", default="benefits/spbu_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.add_argument("--url", default="https://abiturient.spbu.ru/medialibrary/ru/2026/bac/bac_spec_olymp_2_2026.pdf")
+    p.set_defaults(func=cmd_benefits_import_spbu)
     mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
     p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
     p.add_argument("source", nargs="?", default=mephi_url)

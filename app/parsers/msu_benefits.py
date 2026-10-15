@@ -168,26 +168,3 @@ def parse_msu_pdf(path) -> MsuImport:
     result.title = re.sub(r"\s+", " ", first.split("Установлены")[0]).strip()
     return result
 
-
-def expand_wildcards(rules: list[dict], catalog, academic_year: str) -> tuple[list[dict], list[str]]:
-    """«*» — все олимпиады перечня этого года с таким профилем и уровнем → по правилу на олимпиаду."""
-    out, problems = [], []
-    for rule in rules:
-        if rule["olympiad"] != WILDCARD:
-            out.append(rule)
-            continue
-        wanted = (rule["profiles"] or [""])[0].replace("ё", "е")
-        levels = set(rule["levels"] or [1, 2, 3])
-        found = []
-        for o in catalog.olympiads.values():
-            if o.is_vsosh:
-                continue
-            for name, p in o.profiles_in(academic_year).items():
-                if name.lower().replace("ё", "е") == wanted and p.level in levels:
-                    found.append((o, name))
-        if not found:
-            problems.append(f"«*»: в перечне {academic_year} нет олимпиад профиля «{wanted}» уровня {sorted(levels)}")
-        for o, name in sorted(found, key=lambda x: x[0].name):
-            out.append({**rule, "olympiad": o.name, "profiles": [name],
-                        "note": "любая олимпиада перечня этого уровня по профилю"})
-    return out, problems

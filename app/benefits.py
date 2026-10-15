@@ -22,6 +22,8 @@ BENEFIT_TYPES = {"bvi": "БВИ", "score100": "100 баллов ЕГЭ", "dvi100
 DIPLOMAS = {"winner": "победителям", "prize": "призёрам", "any": "победителям и призёрам"}
 DOCUMENT_STATUSES = {"draft": "проект", "approved": "утверждено"}
 VSOSH = "ВсОШ"
+WILDCARD = "*"   # «любая олимпиада перечня» с нужным профилем / предметом и уровнем
+_ROMAN = {1: "I", 2: "II", 3: "III"}
 
 
 class BenefitsError(ValueError):
@@ -43,6 +45,7 @@ class Rule:
     diploma_since: int | None      # диплом не раньше этого года
     note: str | None
     score_for: str | None = None   # за что ставят 100 баллов: «ЕГЭ по физике», «ДВИ по математике»
+    wildcard: str | None = None    # правило «любая олимпиада…» — его описание для экранов вуза
 
 
 @dataclass
@@ -135,11 +138,59 @@ def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
     return None
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"(\w)- (\w)", r"\1-\2", text).lower().replace("ё", "е").strip()
+
+
+def wildcard_matches(catalog: Catalog, profiles: list[str] | None, subjects: list[str] | None,
+                     levels: list[int] | None, academic_year: str) -> list[tuple[CatalogOlympiad, str]]:
+    """Олимпиады перечня года с профилем из `profiles` (или с предметом из `subjects`) нужного уровня.
+    Возвращает пары (олимпиада, название профиля в каталоге)."""
+    want_profiles = {_norm(p) for p in profiles or []}
+    want_subjects = {_norm(x) for x in subjects or []}
+    wanted_levels = set(levels or [1, 2, 3])
+    found = []
+    for o in catalog.olympiads.values():
+        if o.is_vsosh:
+            continue
+        for name, p in o.profiles_in(academic_year).items():
+            if p.level not in wanted_levels:
+                continue
+            if want_profiles and _norm(name) not in want_profiles:
+                continue
+            if want_subjects and not want_subjects & {_norm(x) for x in p.subjects}:
+                continue
+            if want_profiles or want_subjects:
+                found.append((o, name))
+    return sorted(found, key=lambda x: (x[0].name, x[1]))
+
+
+def wildcard_label(profiles: list[str] | None, subjects: list[str] | None, levels: list[int] | None) -> str:
+    """«любая олимпиада перечня I–II уровня по профилю «математика»»."""
+    label = "любая олимпиада перечня"
+    if levels and set(levels) != {1, 2, 3}:
+        lv = sorted(levels)
+        label += f" {_ROMAN[lv[0]]}{'–' + _ROMAN[lv[-1]] if len(lv) > 1 else ''} уровня"
+    if profiles:
+        label += " по профилю «" + "», «".join(profiles) + "»"
+    elif subjects:
+        label += " с предметом «" + "», «".join(subjects) + "»"
+    return label
+
+
 def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], list[str]]:
     """Для импорта таблиц вузов: оставляет правила, чьи олимпиада и профиль нашлись в каталоге.
     Названия профилей приводятся к написанию каталога (регистр, «ё»). Возвращает (правила, проблемы)."""
     kept, problems = [], []
     for rule in rules:
+        if rule["olympiad"] == WILDCARD:
+            year = rule.get("rsr_year") or catalog.current_year
+            if not wildcard_matches(catalog, rule.get("profiles"), rule.get("subjects"), rule.get("levels"), year):
+                problems.append(f"«любая олимпиада»: в перечне {year} нет подходящих — "
+                                f"{wildcard_label(rule.get('profiles'), rule.get('subjects'), rule.get('levels'))}")
+                continue
+            kept.append(rule)
+            continue
         olympiad = _resolve(catalog, rule["olympiad"])
         if olympiad is None:
             problems.append(f"олимпиада не найдена: «{rule['olympiad']}»")
@@ -202,6 +253,9 @@ def parse_file(data: dict, catalog: Catalog, name: str = "") -> UniversityBenefi
         where = f"{name}, правило {i} ({raw.get('olympiad', '?')})"
         merged = {**defaults, **raw}
         query = merged.get("olympiad")
+        if query == WILDCARD:
+            rules.extend(_wildcard_rules(merged, catalog, where, errors))
+            continue
         olympiad = _resolve(catalog, query) if isinstance(query, str) else None
         if olympiad is None:
             errors.append(f"{where}: олимпиада не найдена в перечне — уточните название")
@@ -239,7 +293,7 @@ def parse_file(data: dict, catalog: Catalog, name: str = "") -> UniversityBenefi
             note=merged.get("note"),
             score_for=merged.get("score_for"),
         ))
-    if not rules and not errors:
+    if not rules and not errors and not data.get("rules"):
         errors.append(f"{name}: нет ни одного правила")
     if errors:
         raise BenefitsError("\n".join(errors))
@@ -249,6 +303,37 @@ def parse_file(data: dict, catalog: Catalog, name: str = "") -> UniversityBenefi
         source_title=data.get("source_title", ""), checked_at=checked_at,
         notes=list(data.get("notes") or []), rules=rules, file=name,
     )
+
+
+def _wildcard_rules(merged: dict, catalog: Catalog, where: str, errors: list[str]) -> list[Rule]:
+    """«*» раскрывается при загрузке: по правилу на каждую подходящую олимпиаду перечня."""
+    profiles = _list_of(merged.get("profiles"), str, where, errors)
+    subjects = _list_of(merged.get("subjects"), str, where, errors)
+    levels = _list_of(merged.get("levels"), int, where, errors)
+    if not profiles and not subjects:
+        errors.append(f"{where}: для «*» нужен profiles или subjects")
+        return []
+    if merged.get("benefit") not in BENEFIT_TYPES or merged.get("diploma", "any") not in DIPLOMAS:
+        errors.append(f"{where}: benefit — одно из {list(BENEFIT_TYPES)}, diploma — одно из {list(DIPLOMAS)}")
+        return []
+    year = merged.get("rsr_year") or catalog.current_year
+    label = wildcard_label(profiles, subjects, levels)
+    return [Rule(
+        olympiad_query=WILDCARD,
+        olympiad=o,
+        benefit=merged["benefit"],
+        diploma=merged.get("diploma", "any"),
+        profiles=[profile],
+        levels=levels,
+        programs=_list_of(merged.get("programs"), str, where, errors),
+        confirm_min_score=merged.get("confirm_min_score"),
+        confirm_subject=merged.get("confirm_subject"),
+        grades=_list_of(merged.get("grades"), int, where, errors),
+        diploma_since=merged.get("diploma_since"),
+        note=merged.get("note") or label,
+        score_for=merged.get("score_for"),
+        wildcard=label,
+    ) for o, profile in wildcard_matches(catalog, profiles, subjects, levels, year)]
 
 
 def load_benefits(folder: Path, catalog: Catalog) -> BenefitsCatalog:
