@@ -425,6 +425,17 @@ def reminder(r: Reminder, o: CatalogOlympiad) -> str:
 BENEFIT_ICONS = {"bvi": "🏅", "score100": "💯", "dvi100": "📝"}
 
 
+# Проект приказа Минобрнауки (сентябрь 2026): с 1 марта 2027 БВИ по олимпиадам РСОШ — только победителям,
+# призёрам — 100 баллов. Пока не принят; убрать или переписать, когда выйдет окончательная редакция.
+PRIZE_BVI_WARNING = ("⚠️ <i>Проект Минобрнауки (сентябрь 2026): с приёма 2027 БВИ по олимпиадам РСОШ — "
+                     "только победителям, призёрам — 100 баллов ЕГЭ. Пока не принят, следим.</i>")
+
+
+def prize_bvi_affected(rules: list[Rule]) -> bool:
+    """Есть БВИ призёрам олимпиады РСОШ — на такие льготы может повлиять проект Минобрнауки."""
+    return any(r.benefit == "bvi" and r.diploma in ("prize", "any") and not r.olympiad.is_vsosh for r in rules)
+
+
 def _benefit_order(benefit: str) -> int:
     return list(BENEFIT_TYPES).index(benefit)
 
@@ -519,6 +530,8 @@ def olympiad_benefits(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits
         return (f"🎓 <b>Льготы: «{name}»</b>\n\nПока нет данных ни по одному вузу из тех, что мы собрали. "
                 f"Список вузов пополняется — загляни в «🎓 Вузы» в меню.")
     lines = [f"🎓 <b>Льготы: «{name}»</b>", ""]
+    if prize_bvi_affected([r for _, rules in entries for r in rules]):
+        lines += [PRIZE_BVI_WARNING, ""]
     for u, rules in entries:
         lines.append(f"<b>{escape(u.university)}</b> — <i>{u.status_label(admission_year)}</i>")
         lines += _summary(rules)
@@ -534,6 +547,8 @@ def olympiad_university_benefits(o: CatalogOlympiad, u: UniversityBenefits, rule
     """Все правила одного вуза для олимпиады — со списками программ."""
     name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
     lines = [f"🎓 <b>{escape(u.university)}: «{name}»</b>", f"<i>{u.status_label(admission_year)}</i>", ""]
+    if prize_bvi_affected(rules):
+        lines += [PRIZE_BVI_WARNING, ""]
     order = sorted(rules, key=lambda r: (_benefit_order(r.benefit), (r.profiles or [""])[0], r.diploma != "any"))
     for r in order:
         lines.append(_rule_line(r).split("\n")[0])
@@ -565,6 +580,8 @@ def university_benefits(u: UniversityBenefits, admission_year: int) -> str:
         lines.append(f"⚠️ Правила на приём {admission_year} вуз ещё не опубликовал — это данные прошлого года.")
     for n in u.notes:
         lines.append(f"• {escape(n)}")
+    if prize_bvi_affected(u.rules):
+        lines.append(PRIZE_BVI_WARNING)
     lines.append("")
     groups: dict[tuple[str, str], list[str]] = {}
     for r in u.rules:

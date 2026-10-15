@@ -143,3 +143,17 @@ class TextsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrizeWarningTest(unittest.TestCase):
+    def test_warning_only_for_rsosh_prize_bvi(self):
+        from types import SimpleNamespace
+
+        from app.bot.texts import prize_bvi_affected
+
+        rsosh, vsosh = SimpleNamespace(is_vsosh=False), SimpleNamespace(is_vsosh=True)
+        rule = lambda o, benefit, diploma: SimpleNamespace(olympiad=o, benefit=benefit, diploma=diploma)
+        self.assertTrue(prize_bvi_affected([rule(rsosh, "bvi", "any")]))
+        self.assertTrue(prize_bvi_affected([rule(rsosh, "bvi", "prize")]))
+        self.assertFalse(prize_bvi_affected([rule(rsosh, "bvi", "winner"), rule(rsosh, "score100", "any")]))
+        self.assertFalse(prize_bvi_affected([rule(vsosh, "bvi", "any")]))
