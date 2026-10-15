@@ -131,7 +131,15 @@ def _fix_homoglyphs(text: str) -> str:
     return " ".join(words)
 
 
+# Названия, которые вузы пишут иначе, чем перечень
+NAME_ALIASES = {
+    "международная олимпиада «innopolis open»": "Международная олимпиада Иннополиса",
+    "международная олимпиада innopolis open": "Международная олимпиада Иннополиса",
+}
+
+
 def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
+    query = NAME_ALIASES.get(re.sub(r"\s+", " ", query).strip().lower(), query)
     if query == VSOSH:
         return next((o for o in catalog.olympiads.values() if o.is_vsosh), None)
     for text in dict.fromkeys((query, _fix_homoglyphs(query))):
@@ -156,6 +164,20 @@ def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
     close = difflib.get_close_matches(normalize(_fix_homoglyphs(query)), list(names), n=2, cutoff=0.95)
     if len(close) == 1:
         return names[close[0]]
+    # PDF с перемешанными пробелами и цифрами («Олимпиадашкольников», «ш8 кольников»): сравниваем одни буквы,
+    # для обрезанного названия — по единственному совпадению начала
+    squash = lambda t: re.sub(r"[^а-яёa-z]", "", t.lower().replace("ё", "е"))
+    q = squash(_fix_homoglyphs(query))
+    if len(q) >= 8:
+        by_squash = {}
+        for o in catalog.olympiads.values():
+            by_squash.setdefault(squash(o.name), o)
+        if q in by_squash:
+            return by_squash[q]
+        starts = {id(o): o for k, o in by_squash.items()
+                  if len(q) >= 25 and k.startswith(q) or len(k) >= 25 and q.startswith(k)}
+        if len(starts) == 1:
+            return next(iter(starts.values()))
     # «Открытая олимпиада СКФУ «45 параллель»» — по тексту в кавычках
     quoted = re.findall(r"[«“\"]([^«»“”\"]{4,})[»”\"]", _fix_homoglyphs(query))
     if quoted:

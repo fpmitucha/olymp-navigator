@@ -495,6 +495,45 @@ def cmd_benefits_import_ranepa(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_import_fa(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.fa_benefits import parse_fa_pdf
+
+    table = parse_fa_pdf(args.source)
+    catalog = _catalog()
+    rules, problems = resolve_import(table.rules, catalog)
+    doc = {
+        "university": "Финуниверситет",
+        "full_name": "Финансовый университет при Правительстве Российской Федерации",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": "Перечень олимпиад школьников за 10, 11 класс для предоставления особых прав "
+                        f"в Финансовый университет в {args.year}/{(args.year + 1) % 100} учебном году",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Победителям и призёрам за 10–11 класс; ЕГЭ по предмету подтверждения — от 75 баллов.",
+            "Уровень олимпиады и то, засчитывается ли диплом, зависят от года диплома — см. примечание к правилу.",
+            "Льготы даются на «группу образовательных программ»; состав групп — в правилах приёма Финуниверситета.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"строк: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    if problems:
+        print(f"\nНе сопоставлено ({len(problems)}):")
+        for p in problems:
+            print(f"  ? {p}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -715,6 +754,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="benefits/ranepa_2026.json")
     p.add_argument("--year", type=int, default=2026)
     p.set_defaults(func=cmd_benefits_import_ranepa)
+    p = ben.add_parser("import-fa", help="импорт PDF перечня олимпиад Финуниверситета (нужен pdfplumber)")
+    p.add_argument("source", nargs="?", default="data/fa_olymp_2026.pdf")
+    p.add_argument("--out", default="benefits/fa_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--url", default="https://www.fa.ru/upload/constructor/918/oxs36ll62co031uhysc4la3e86r9numg/"
+                                    "Perechen-olimpiad-shkolnikov-2026.pdf")
+    p.set_defaults(func=cmd_benefits_import_fa)
     mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
     p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
     p.add_argument("source", nargs="?", default=mephi_url)
