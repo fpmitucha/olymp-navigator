@@ -33,6 +33,8 @@ class Settings:
     request_delay: float = float(os.environ.get("REQUEST_DELAY", "3"))
     request_timeout: float = float(os.environ.get("REQUEST_TIMEOUT", "30"))
     data_dir: Path = Path(os.environ.get("DATA_DIR", PROJECT_ROOT / "data"))
+    telegram_bot_token: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    bot_db_path: Path = Path(os.environ.get("BOT_DB_PATH", Path(os.environ.get("DATA_DIR", PROJECT_ROOT / "data")) / "bot.sqlite3"))
 
 
 settings = Settings()

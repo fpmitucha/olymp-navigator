@@ -8,6 +8,9 @@
     python -m app.cli rsr load data/rsr/rsr_2026-27.json
     python -m app.cli rsr sql data/rsr/rsr_2026-27.json > load.sql
     python -m app.cli vsosh load --year 2026/27
+    python -m app.cli bot run
+    python -m app.cli stages import stages.csv
+    python -m app.cli stages list
 """
 
 from __future__ import annotations
@@ -96,6 +99,86 @@ def cmd_vsosh_load(args: argparse.Namespace) -> int:
     return 0
 
 
+def _catalog():
+    from app.catalog import Catalog
+
+    try:
+        return Catalog.load(settings.data_dir / "rsr")
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def cmd_bot_run(args: argparse.Namespace) -> int:
+    import asyncio
+    import logging
+
+    token = settings.telegram_bot_token
+    if not token:
+        print("Не задан TELEGRAM_BOT_TOKEN. Добавьте его в файл .env (см. .env.example)", file=sys.stderr)
+        return 1
+    try:
+        from app.bot.main import run
+    except ImportError as exc:
+        print(f"Не установлены зависимости бота ({exc}). Выполните: pip install -r requirements.txt", file=sys.stderr)
+        return 1
+    from app.bot.storage import Storage
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    catalog = _catalog()
+    storage = Storage(settings.bot_db_path)
+    print(f"Каталог: {len(catalog.olympiads)} олимпиад, годы {', '.join(catalog.years)}. База бота: {settings.bot_db_path}")
+    print("Бот запущен, остановка — Ctrl+C")
+    try:
+        asyncio.run(run(token, catalog, storage))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        storage.close()
+    return 0
+
+
+def cmd_stages_import(args: argparse.Namespace) -> int:
+    from app.bot.storage import Storage
+    from app.stages import read_stages_csv
+
+    catalog = _catalog()
+
+    def resolve(text: str):
+        found = catalog.find_one(text)
+        if found:
+            return found.id
+        hits = catalog.search(text, limit=2)
+        return hits[0].olympiad.id if len(hits) == 1 else None
+
+    try:
+        rows = read_stages_csv(Path(args.csv), resolve, default_year=catalog.current_year)
+    except (ValueError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    storage = Storage(settings.bot_db_path)
+    count = storage.upsert_stages(rows)
+    storage.close()
+    print(f"Загружено этапов: {count}")
+    return 0
+
+
+def cmd_stages_list(args: argparse.Namespace) -> int:
+    from app.bot.storage import Storage
+
+    catalog = _catalog()
+    storage = Storage(settings.bot_db_path)
+    stages = storage.stages()
+    storage.close()
+    if not stages:
+        print("Этапов нет. Загрузите их: python -m app.cli stages import файл.csv")
+    for s in stages:
+        o = catalog.get(s.olympiad_id)
+        name = o.name if o else s.olympiad_id
+        dates = " – ".join(d.isoformat() for d in (s.starts_at, s.ends_at) if d)
+        print(f"{dates:25} {s.kind:13} {name} — {s.title}" + (f" ({s.profile})" if s.profile else ""))
+    return 0
+
+
 def cmd_db_migrate(args: argparse.Namespace) -> int:
     from app.db.psql import migrate
 
@@ -142,6 +225,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--year", default="2026/27")
     p.add_argument("--database-url", default=None)
     p.set_defaults(func=cmd_vsosh_load)
+
+    bot = groups.add_parser("bot", help="Telegram-бот").add_subparsers(dest="command", required=True)
+    p = bot.add_parser("run", help="запустить бота")
+    p.set_defaults(func=cmd_bot_run)
+
+    stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
+    p = stages.add_parser("import", help="загрузить этапы из CSV")
+    p.add_argument("csv")
+    p.set_defaults(func=cmd_stages_import)
+    p = stages.add_parser("list", help="показать загруженные этапы")
+    p.set_defaults(func=cmd_stages_list)
     return parser
 
 

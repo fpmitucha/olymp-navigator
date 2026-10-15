@@ -1,11 +1,12 @@
-# Этапы 0–1: парсинг перечня и загрузка в базу
+# Парсинг перечня и загрузка в базу
 requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0
 
+# Telegram-бот
+aiogram>=3.28,<4
+
 # Подключатся на следующих этапах:
-# aiogram>=3.13          # Telegram-бот (этап 2)
-# psycopg[binary]>=3.2   # драйвер PostgreSQL для бота и сайта
-# SQLAlchemy>=2.0
+# psycopg[binary]>=3.2   # PostgreSQL для бота и сайта на сервере
 # fastapi>=0.115         # API сайта (этап 4)
 # uvicorn>=0.30
