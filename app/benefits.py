@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -99,14 +100,38 @@ class BenefitsCatalog:
 # Загрузка и проверка
 # ---------------------------------------------------------------------------
 
+# Латинские буквы, которые выглядят как кириллические: в таблицах вузов их иногда набирают по ошибке
+_HOMOGLYPHS = str.maketrans("aceopxyABCEHKMOPTX", "асеорхуАВСЕНКМОРТХ")
+
+
+def _fix_homoglyphs(text: str) -> str:
+    """Меняет латинские двойники на кириллицу в словах, где есть кириллица («Bысшая» → «Высшая»)."""
+    text = re.sub(r"[\u00ad\u200b-\u200d\u2060\ufeff]", "", text)  # мягкие переносы, невидимые пробелы
+    words = []
+    for word in text.split(" "):
+        if any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in word):
+            word = word.translate(_HOMOGLYPHS)
+        words.append(word)
+    return " ".join(words)
+
+
 def _resolve(catalog: Catalog, query: str) -> CatalogOlympiad | None:
     if query == VSOSH:
         return next((o for o in catalog.olympiads.values() if o.is_vsosh), None)
-    found = catalog.find_one(query)
-    if found:
-        return found
-    hits = catalog.search(query, limit=2)
-    return hits[0].olympiad if len(hits) == 1 else None
+    for text in dict.fromkeys((query, _fix_homoglyphs(query))):
+        found = catalog.find_one(text)
+        if found:
+            return found
+        hits = catalog.search(text, limit=2)
+        if len(hits) == 1:
+            return hits[0].olympiad
+    # «Открытая олимпиада СКФУ «45 параллель»» — по тексту в кавычках
+    quoted = re.findall(r"[«“\"]([^«»“”\"]{4,})[»”\"]", _fix_homoglyphs(query))
+    if quoted:
+        hits = catalog.search(quoted[-1], limit=2)
+        if len(hits) == 1:
+            return hits[0].olympiad
+    return None
 
 
 def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], list[str]]:
@@ -121,7 +146,16 @@ def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], lis
         profiles = rule.get("profiles")
         if profiles:
             by_norm = {p.lower().replace("ё", "е"): p for p in olympiad.profiles}
-            fixed = [by_norm.get(p.lower().replace("ё", "е")) for p in profiles]
+
+            def match(name: str) -> str | None:
+                norm = _fix_homoglyphs(name).lower().replace("ё", "е").strip()
+                if norm in by_norm:
+                    return by_norm[norm]
+                # обрезанное в таблице название: «…химический инжинирин» → единственный профиль с таким началом
+                prefixed = [p for n, p in by_norm.items() if len(norm) >= 10 and n.startswith(norm)]
+                return prefixed[0] if len(prefixed) == 1 else None
+
+            fixed = [match(p) for p in profiles]
             if None in fixed:
                 problems.append(f"профиль {profiles} не найден у «{olympiad.name}»; есть: {sorted(olympiad.profiles)}")
                 continue

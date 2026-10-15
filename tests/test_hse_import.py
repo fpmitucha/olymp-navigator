@@ -47,6 +47,23 @@ TABLE = [
 ]
 
 
+class ResolveTest(unittest.TestCase):
+    def test_homoglyphs_quotes_and_truncated_profiles(self):
+        from app.benefits import resolve_import
+
+        catalog = sample_catalog()
+        rules = [
+            {"olympiad": "Олимпиада школьников «Фи3тех»".replace("3", "з").replace("Олимпиада", "Oлимпиaдa"),
+             "profiles": ["математикa"]},                                     # латинские o, a
+            {"olympiad": "Олимпиада МФТИ «Физтех»", "profiles": None},       # чужое начало, верные кавычки
+            {"olympiad": "НТО", "profiles": ["летающая робототехн"]},         # обрезано
+            {"olympiad": "НТО", "profiles": ["робототехника"]},               # не профиль НТО
+        ]
+        kept, problems = resolve_import(rules, catalog)
+        self.assertEqual([r["profiles"] for r in kept], [["математика"], None, ["летающая робототехника"]])
+        self.assertEqual(len(problems), 1)
+
+
 class XlsxTest(unittest.TestCase):
     def test_roundtrip(self):
         rows = [{"A": "x", "C": "<y> & z"}, {"B": "Математика"}]
