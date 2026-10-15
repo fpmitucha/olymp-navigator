@@ -50,6 +50,13 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(self.s.upcoming_stages("o1", date(2027, 2, 23))[0].id, stages[0].id)
         self.assertEqual(self.s.upcoming_stages("o1", date(2027, 2, 24)), [])
 
+    def test_search_queries(self):
+        qid = self.s.save_query("физика")
+        self.assertEqual(self.s.save_query("физика"), qid)
+        self.assertNotEqual(self.s.save_query("химия"), qid)
+        self.assertEqual(self.s.get_query(qid), "физика")
+        self.assertIsNone(self.s.get_query(9999))
+
     def test_notification_log(self):
         self.s.log_notification(1, 5, "stage_t7")
         self.s.log_notification(1, 5, "stage_t7")
@@ -83,29 +90,59 @@ class TextsTest(unittest.TestCase):
                          "Олимпиада им. В.Е. Татлина")
         self.assertTrue(texts.short_name("а" * 100).endswith("…"))
 
-    def test_card(self):
+    def test_card_groups_levels_and_shows_changes(self):
         c = sample_catalog()
         fiztech = c.search("физтех")[0].olympiad
         stage = Stage(1, fiztech.id, "final", "Заключительный этап", date(2027, 2, 20), None)
-        card = texts.olympiad_card(fiztech, c.current_year, [stage], TODAY)
-        self.assertIn("математика — <b>1 ур.</b>", card)
-        self.assertIn("прошлые годы: 25/26 — 2, 24/25 — 2", card)
-        self.assertNotIn("прошлые годы: 25/26 — 1", card)  # у физики уровень не менялся
+        card = texts.olympiad_card(fiztech, c.years, [stage], TODAY)
+        self.assertTrue(card.startswith("<b>Физтех</b>\n<i>Олимпиада школьников «Физтех»</i>"))
+        self.assertIn("1️⃣ <b>1 уровень:</b> математика, физика", card)
+        self.assertIn("<b>Изменения к 2025/26</b>\n⬆️ математика: 2 → 1 уровень", card)
+        self.assertNotIn("физика: 1 → 1", card)
         self.assertIn("20 февраля — Заключительный этап", card)
-        self.assertIn('href="https://olymp.mipt.ru"', card)
+
+    def test_card_new_profile(self):
+        c = sample_catalog()
+        card = texts.olympiad_card(c.search("оммо")[0].olympiad, c.years, [], TODAY)
+        self.assertIn("🆕 физика — новый профиль", card)
+
+    def test_detailed_card(self):
+        c = sample_catalog()
+        fiztech = c.search("физтех")[0].olympiad
+        card = texts.olympiad_card(fiztech, c.years, [], TODAY, detailed=True)
+        self.assertIn("<b>математика</b> — 1 ур.", card)
+        self.assertIn("26/27: 1 · 25/26: 2 · 24/25: 2", card)
+        nto = c.search("нто")[0].olympiad
+        card = texts.olympiad_card(nto, c.years, [], TODAY, detailed=True)
+        self.assertIn("предметы: математика и механика, информатика и вычислительная техника", card)
+
+    def test_compact_table_for_many_profiles(self):
+        from app.catalog import Catalog
+        from tests.helpers import olympiad, profile, rsr_list
+
+        many = [profile(f"профиль {i:02d}", 1 + i % 3) for i in range(20)]
+        c = Catalog([
+            rsr_list("2025/26", olympiad("Олимпиада «Большая»", *many[:15])),
+            rsr_list("2026/27", olympiad("Олимпиада «Большая»", *many[5:])),
+        ])
+        card = texts.olympiad_card(c.search("большая")[0].olympiad, c.years, [], TODAY, detailed=True)
+        self.assertIn("<i>26/27 · 25/26  (— нет в перечне)</i>", card)
+        self.assertIn("<b>профиль 05</b>: 3 · 3", card)
+        self.assertIn("<b>профиль 15</b>: 1 · —", card)
+        self.assertIn("<b>Профили прошлых лет</b>\nпрофиль 00: — · 1", card)
 
     def test_card_for_dropped_olympiad(self):
         c = sample_catalog()
         robofest = c.search("робофест")[0].olympiad
-        card = texts.olympiad_card(robofest, c.current_year, [], TODAY)
-        self.assertIn("нет в перечне 2026/27", card)
-        self.assertIn("физика: 25/26 — 3, 24/25 — 3", card)
+        card = texts.olympiad_card(robofest, c.years, [], TODAY)
+        self.assertIn("Олимпиады нет в перечне 2026/27", card)
+        self.assertIn("<b>Перечень 2025/26</b>\n3️⃣ <b>3 уровень:</b> физика", card)
 
     def test_card_escapes_html_and_fits(self):
         c = sample_catalog()
         o = c.search("физтех")[0].olympiad
         o.name = "<script>"
-        card = texts.olympiad_card(o, c.current_year, [], TODAY)
+        card = texts.olympiad_card(o, c.years, [], TODAY)
         self.assertIn("&lt;script&gt;", card)
         long_lines = ["<b>x</b>"] + [f"• профиль {i} — <b>1 ур.</b>" for i in range(400)]
         fitted = texts._fit(long_lines)
@@ -114,9 +151,19 @@ class TextsTest(unittest.TestCase):
 
     def test_vsosh_card(self):
         c = sample_catalog()
-        card = texts.olympiad_card(c.search("всош")[0].olympiad, c.current_year, [], TODAY)
-        self.assertIn("БВИ", card)
+        card = texts.olympiad_card(c.search("всош")[0].olympiad, c.years, [], TODAY)
+        self.assertTrue(card.startswith("<b>ВсОШ</b>"))
+        self.assertIn("без вступительных испытаний", card)
         self.assertIn("Предметы (24)", card)
+
+    def test_search_header(self):
+        self.assertEqual(
+            texts.search_results("физика", 23, 1, 3, "2026/27"),
+            "🔍 <b>физика</b> — 23 олимпиады, страница 2 из 3\n\n<i>Уровень — по перечню 2026/27. Выбери олимпиаду:</i>",
+        )
+        self.assertIn("1 олимпиада", texts.search_results("x", 1, 0, 1, "2026/27"))
+        self.assertIn("ничего не нашлось", texts.search_results("<b>", 0, 0, 1, "2026/27"))
+        self.assertIn("&lt;b&gt;", texts.search_results("<b>", 0, 0, 1, "2026/27"))
 
     def test_reminder_texts(self):
         c = sample_catalog()

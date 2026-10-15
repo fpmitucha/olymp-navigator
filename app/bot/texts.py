@@ -15,34 +15,33 @@ MONTHS = ["января", "февраля", "марта", "апреля", "ма�
           "августа", "сентября", "октября", "ноября", "декабря"]
 
 START = (
-    "Привет! Я помогаю разобраться с олимпиадами из перечня РСОШ и ВсОШ.\n\n"
-    "Напиши название олимпиады, сокращение или предмет, например:\n"
-    "• <code>Физтех</code>\n"
-    "• <code>ВсОШ</code>\n"
-    "• <code>информатика</code>\n"
-    "• <code>робототехника</code>\n\n"
-    "Я покажу профили и уровни олимпиады за последние годы. Подпишись — и я напомню "
-    "о регистрации и этапах."
+    "👋 Привет! Я помогаю разобраться с олимпиадами из перечня РСОШ и ВсОШ.\n\n"
+    "<b>Напиши название, сокращение или предмет</b> — например, <code>Физтех</code>, "
+    "<code>НТО</code> или <code>информатика</code>. Можно вместе: <code>ломоносов химия</code>.\n\n"
+    "Покажу профили и уровни за последние годы, а если подпишешься — напомню о регистрации и этапах."
 )
 
 HELP = (
     "<b>Как пользоваться</b>\n\n"
-    "Отправь название олимпиады, сокращение (ВсОШ, МОШ, НТО, ВШЭ, МГУ, СПбГУ) или предмет. "
-    "В карточке олимпиады — профили и их уровни.\n\n"
-    "<b>Почему важны уровни прошлых лет.</b> Диплом действует 4 года, а вуз учитывает уровень олимпиады "
+    "🔍 <b>Поиск.</b> Название олимпиады, сокращение (ВсОШ, МОШ, НТО, ВШЭ, МГУ, СПбГУ, ОММО) или предмет.\n\n"
+    "📋 <b>Карточка.</b> Профили по уровням и что изменилось с прошлого года. "
+    "Кнопка «Подробнее» — предметы и уровни каждого профиля по годам.\n\n"
+    "📆 <b>Почему важны прошлые годы.</b> Диплом действует 4 года, а вуз смотрит на уровень олимпиады "
     "в том году, когда диплом получен.\n\n"
-    "<b>Подписки.</b> Кнопка «Подписаться» в карточке. Я напомню о регистрации за 3 дня и в последний день, "
-    "об этапах — за неделю, за день и в день этапа.\n\n"
-    "/subs — мои подписки\n"
-    "/help — эта справка\n\n"
-    "Данные берутся с сайта Российского совета олимпиад школьников. Окончательную информацию "
-    "всегда сверяй на сайте олимпиады и вуза."
+    "🔔 <b>Подписки.</b> Напомню о регистрации за 3 дня и в последний день, об этапах — за неделю, "
+    "за день и в день этапа. Пишу только с 9:00 до 21:00 по Москве.\n\n"
+    "<i>Данные — с сайта Российского совета олимпиад школьников. Окончательную информацию "
+    "сверяй на сайтах олимпиады и вуза.</i>"
 )
 
 NOT_FOUND = (
-    "Ничего не нашлось по запросу «{query}».\n\n"
+    "🤷 По запросу «{query}» ничего не нашлось.\n\n"
     "Попробуй короче: одно слово из названия, сокращение (МОШ, НТО, ВШЭ) или предмет."
 )
+
+LEVEL_ICONS = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣"}
+MAX_DROPPED = 6           # сколько профилей прошлых лет показывать в краткой карточке
+DETAIL_SUBJECTS_UP_TO = 12  # в подробной карточке предметы показываем, если профилей не больше
 
 
 def ru_date(d: date) -> str:
@@ -101,6 +100,10 @@ def short_name(name: str, limit: int = 48) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def button_name(o: CatalogOlympiad, limit: int = 50) -> str:
+    return "ВсОШ" if o.is_vsosh else short_name(o.name, limit)
+
+
 def level_text(level: int | None) -> str:
     return f"{level} ур." if level else "без уровня"
 
@@ -114,6 +117,7 @@ def short_year(academic_year: str) -> str:
 # ---------------------------------------------------------------------------
 
 def hit_button_label(hit: SearchHit, current_year: str) -> str:
+    """«Физтех · 1 ур.», «ВсОШ · физика · БВИ», «Робофест · не в перечне»."""
     o = hit.olympiad
     label = "ВсОШ" if o.is_vsosh else short_name(o.name, 40)
     if hit.matched_profiles and len(hit.matched_profiles) == 1:
@@ -127,94 +131,175 @@ def hit_button_label(hit: SearchHit, current_year: str) -> str:
     return f"{label} · {level_text(level)}" if level else label
 
 
-def search_results(query: str, hits: list[SearchHit], total_limit_reached: bool) -> str:
-    if not hits:
+def search_results(query: str, total: int, page: int, pages: int, current_year: str) -> str:
+    if not total:
         return NOT_FOUND.format(query=escape(query))
-    text = f"По запросу «{escape(query)}» нашлось: {len(hits)}. Выбери олимпиаду:"
-    if total_limit_reached:
-        text += "\n\n<i>Показаны первые результаты, уточни запрос, чтобы увидеть остальные.</i>"
-    return text
+    text = f"🔍 <b>{escape(query)}</b> — {_count(total)}"
+    if pages > 1:
+        text += f", страница {page + 1} из {pages}"
+    return text + f"\n\n<i>Уровень — по перечню {current_year}. Выбери олимпиаду:</i>"
+
+
+def _count(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        word = "олимпиада"
+    elif n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        word = "олимпиады"
+    else:
+        word = "олимпиад"
+    return f"{n} {word}"
 
 
 # ---------------------------------------------------------------------------
 # Карточка олимпиады
 # ---------------------------------------------------------------------------
 
-def _subjects_line(profile_name: str, subjects: list[str]) -> str | None:
+def _subjects_line(profile_name: str, subjects: list[str], limit: int = 140) -> str | None:
     if not subjects or subjects == [profile_name]:
         return None
     text = ", ".join(subjects)
-    if len(text) > 160:
-        text = text[:159].rstrip(", ") + "…"
-    return text
+    return text if len(text) <= limit else text[: limit - 1].rstrip(", ") + "…"
 
 
-def _history(o: CatalogOlympiad, profile_name: str, current_year: str) -> str | None:
-    by_year = o.profiles[profile_name]
-    current = by_year.get(current_year)
-    previous = [(y, p.level) for y, p in sorted(by_year.items(), key=lambda kv: year_start(kv[0]), reverse=True)
-                if y != current_year]
-    if not previous or all(level == (current.level if current else None) for _, level in previous):
-        return None
-    return ", ".join(f"{short_year(y)} — {level or '—'}" for y, level in previous)
+def _by_year_desc(by_year: dict) -> list:
+    return sorted(by_year.items(), key=lambda kv: year_start(kv[0]), reverse=True)
 
 
-def olympiad_card(o: CatalogOlympiad, current_year: str, upcoming: list[Stage], today: date) -> str:
-    lines = [f"<b>{escape(o.name)}</b>", ""]
+def _levels_by_group(profiles: dict) -> list[str]:
+    """«1 уровень: математика, физика» — профили, сгруппированные по уровню."""
+    groups: dict[int | None, list[str]] = {}
+    for name, p in profiles.items():
+        groups.setdefault(p.level, []).append(name)
+    lines = []
+    for level in sorted(groups, key=lambda lv: lv or 4):
+        names = ", ".join(escape(n) for n in sorted(groups[level]))
+        icon = LEVEL_ICONS.get(level, "▫️")
+        label = f"{level} уровень" if level else "без уровня"
+        lines.append(f"{icon} <b>{label}:</b> {names}")
+    return lines
+
+
+def _changes(o: CatalogOlympiad, current_year: str, prev_year: str) -> list[str]:
+    """Что изменилось в перечне текущего года по сравнению с прошлым."""
+    now, before = o.profiles_in(current_year), o.profiles_in(prev_year)
+    lines = []
+    for name in sorted(now):
+        if name not in before:
+            lines.append(f"🆕 {escape(name)} — новый профиль")
+            continue
+        old, new = before[name].level, now[name].level
+        if old and new and old != new:
+            arrow = "⬆️" if new < old else "⬇️"
+            lines.append(f"{arrow} {escape(name)}: {old} → {new} уровень")
+    for name in sorted(set(before) - set(now)):
+        lines.append(f"✖️ {escape(name)} — убран из перечня")
+    return lines
+
+
+def _compact_table(o: CatalogOlympiad, current_year: str) -> list[str]:
+    """Много профилей (НТО — почти 40 за 5 лет): строка на профиль, уровни по годам через точку."""
+    years = sorted(o.years, key=year_start, reverse=True)
+    lines = [
+        "<b>Уровни по годам</b>",
+        "<i>" + " · ".join(short_year(y) for y in years) + "  (— нет в перечне)</i>",
+        "",
+    ]
+    current, former = [], []
+    for name, by_year in o.profiles.items():
+        levels = " · ".join(str(by_year[y].level or "?") if y in by_year else "—" for y in years)
+        (current if current_year in by_year else former).append((name, levels, by_year))
+    key = lambda item: ((item[2].get(current_year) or _by_year_desc(item[2])[0][1]).level or 4, item[0])  # noqa: E731
+    lines += [f"<b>{escape(name)}</b>: {levels}" for name, levels, _ in sorted(current, key=key)]
+    if former:
+        lines += ["", "<b>Профили прошлых лет</b>"]
+        lines += [f"{escape(name)}: {levels}" for name, levels, _ in sorted(former, key=key)]
+    return lines
+
+
+def olympiad_card(
+    o: CatalogOlympiad, years: list[str], upcoming: list[Stage], today: date, detailed: bool = False
+) -> str:
+    """Карточка олимпиады. years — годы перечня в каталоге, от свежего к старому."""
+    current_year = years[0]
+    prev_year = years[1] if len(years) > 1 else None
+    title = "ВсОШ" if o.is_vsosh else short_name(o.name, 60)
+    lines = [f"<b>{escape(title)}</b>"]
+    if title != o.name:
+        lines.append(f"<i>{escape(o.name)}</i>")
+    lines.append("")
 
     if o.is_vsosh:
+        subjects = sorted(o.profiles_in(o.latest_year))
         lines += [
-            "Всероссийская олимпиада школьников. Победители и призёры заключительного этапа "
-            "имеют право на поступление без вступительных испытаний (БВИ) по профилю олимпиады.",
+            "🏆 Победители и призёры заключительного этапа поступают <b>без вступительных испытаний</b> "
+            "на направления, соответствующие профилю олимпиады.",
             "",
-            f"<b>Предметы ({len(o.profiles_in(o.latest_year))}):</b> "
-            + escape(", ".join(sorted(o.profiles_in(o.latest_year)))),
+            f"<b>Предметы ({len(subjects)}):</b> " + escape(", ".join(subjects)),
         ]
+    elif detailed:
+        lines += _detailed_profiles(o, current_year)
     else:
         in_current = o.profiles_in(current_year)
         if in_current:
-            show_subjects = len(in_current) <= 10  # у НТО 20 профилей: без предметов карточка влезает
-            lines.append(f"<b>Перечень {current_year}:</b>")
-            for name in sorted(in_current, key=lambda n: (in_current[n].level or 4, n)):
-                p = in_current[name]
-                lines.append(f"• {escape(name)} — <b>{level_text(p.level)}</b>")
-                subjects = _subjects_line(name, p.subjects) if show_subjects else None
-                if subjects:
-                    lines.append(f"   <i>{escape(subjects)}</i>")
-                history = _history(o, name, current_year)
-                if history:
-                    lines.append(f"   прошлые годы: {history}")
+            lines.append(f"<b>Перечень {current_year}</b>")
+            lines += _levels_by_group(in_current)
+            changes = _changes(o, current_year, prev_year) if prev_year and prev_year in o.years else []
+            if changes:
+                lines += ["", f"<b>Изменения к {prev_year}</b>"] + changes
         else:
-            lines.append(
-                f"⚠️ <b>Олимпиады нет в перечне {current_year}.</b> Дипломы прошлых лет действуют 4 года."
-            )
+            last = o.latest_year
+            lines += [
+                f"⚠️ <b>Олимпиады нет в перечне {current_year}.</b>",
+                "Дипломы прошлых лет действуют 4 года.",
+                "",
+                f"<b>Перечень {last}</b>",
+            ] + _levels_by_group(o.profiles_in(last))
 
-        dropped = {
-            name: by_year for name, by_year in o.profiles.items()
-            if current_year not in by_year
-        }
-        if dropped:
-            lines += ["", "<b>Профили прошлых лет</b> (дипломы ещё действуют):"]
-            for name in sorted(dropped):
-                history = ", ".join(
-                    f"{short_year(y)} — {p.level or '—'}"
-                    for y, p in sorted(dropped[name].items(), key=lambda kv: year_start(kv[0]), reverse=True)
-                )
-                lines.append(f"• {escape(name)}: {history}")
+        dropped = [name for name, by_year in o.profiles.items()
+                   if current_year not in by_year and (not prev_year or prev_year not in by_year)]
+        if dropped and in_current:
+            items = []
+            for name in sorted(dropped)[:MAX_DROPPED]:
+                year, p = _by_year_desc(o.profiles[name])[0]
+                items.append(f"{escape(name)} ({p.level or '—'} ур. в {short_year(year)})")
+            more = len(dropped) - MAX_DROPPED
+            tail = f" и ещё {more} — в «Подробнее»" if more > 0 else ""
+            lines += ["", "<b>Профили прошлых лет:</b> " + ", ".join(items) + tail]
 
+    lines.append("")
     if upcoming:
-        lines += ["", "<b>Ближайшие этапы:</b>"]
+        lines.append("📅 <b>Ближайшие этапы</b>")
         for s in upcoming:
             profile = f" ({escape(s.profile)})" if s.profile else ""
             lines.append(f"• {ru_period(s.starts_at, s.ends_at)} — {escape(s.title)}{profile}")
     else:
-        lines += ["", "<i>Даты этапов пока не загружены. Подпишись — я напишу, когда они появятся.</i>"]
-
-    if o.websites:
-        links = ", ".join(f'<a href="{escape(url, quote=True)}">{escape(_host(url))}</a>' for url in o.websites[:2])
-        lines += ["", f"Сайт: {links}"]
+        lines.append("📅 <i>Даты этапов пока не загружены. Подпишись — напишу, когда появятся.</i>")
 
     return _fit(lines)
+
+
+def _detailed_profiles(o: CatalogOlympiad, current_year: str) -> list[str]:
+    """Каждый профиль: уровень, предметы, уровни по годам."""
+    if len(o.profiles) > DETAIL_SUBJECTS_UP_TO:
+        return _compact_table(o, current_year)
+    lines = ["<b>Профили и уровни по годам</b>", ""]
+    order = sorted(
+        o.profiles,
+        key=lambda n: (current_year not in o.profiles[n],
+                       (o.profiles[n].get(current_year) or _by_year_desc(o.profiles[n])[0][1]).level or 4, n),
+    )
+    for name in order:
+        by_year = o.profiles[name]
+        latest_year, latest = _by_year_desc(by_year)[0]
+        level = f"{latest.level} ур." if latest.level else "без уровня"
+        status = "" if latest_year == current_year else f" · нет в перечне {current_year}"
+        lines.append(f"<b>{escape(name)}</b> — {level}{status}")
+        subjects = _subjects_line(name, latest.subjects)
+        if subjects:
+            lines.append(f"   предметы: {escape(subjects)}")
+        if len(by_year) > 1 or latest_year != current_year:
+            lines.append("   " + " · ".join(f"{short_year(y)}: {p.level or '—'}" for y, p in _by_year_desc(by_year)))
+    return lines
 
 
 def _host(url: str) -> str:
@@ -249,11 +334,10 @@ def unsubscribed(o: CatalogOlympiad) -> str:
 
 def subscriptions_list(olympiads: list[CatalogOlympiad]) -> str:
     if not olympiads:
-        return "У тебя пока нет подписок. Найди олимпиаду и нажми «Подписаться» в её карточке."
-    lines = [f"<b>Твои подписки ({len(olympiads)}):</b>", ""]
-    lines += [f"• {escape(short_name(o.name, 80))}" for o in olympiads]
-    lines += ["", "Нажми на олимпиаду, чтобы открыть карточку или отписаться."]
-    return "\n".join(lines)
+        return ("🔔 <b>Подписки</b>\n\nПока пусто. Найди олимпиаду и нажми «Подписаться» в её карточке — "
+                "я напомню о регистрации и этапах.")
+    return (f"🔔 <b>Подписки ({len(olympiads)})</b>\n\n"
+            "Напомню о регистрации и этапах этих олимпиад. Нажми на олимпиаду, чтобы открыть карточку.")
 
 
 def reminder(r: Reminder, o: CatalogOlympiad) -> str:

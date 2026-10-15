@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS stage (
     UNIQUE (olympiad_id, academic_year, kind, title, profile)
 );
 CREATE INDEX IF NOT EXISTS stage_olympiad_idx ON stage (olympiad_id);
+CREATE TABLE IF NOT EXISTS search_query (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    query       TEXT NOT NULL UNIQUE,     -- текст запроса; в кнопку Telegram (64 байта) он не влезает
+    created_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS notification_log (
     telegram_id  INTEGER NOT NULL,
     stage_id     INTEGER NOT NULL,
@@ -175,6 +180,19 @@ class Storage:
 
     def upcoming_stages(self, olympiad_id: str, today: date, limit: int = 5) -> list[Stage]:
         return [s for s in self.stages(olympiad_id) if s.is_upcoming(today)][:limit]
+
+    # -- поисковые запросы (для кнопок «Назад» и листания страниц) -----------
+
+    def save_query(self, query: str) -> int:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO search_query (query, created_at) VALUES (?, ?)", (query, _now())
+        )
+        self.conn.commit()
+        return self.conn.execute("SELECT id FROM search_query WHERE query = ?", (query,)).fetchone()["id"]
+
+    def get_query(self, query_id: int) -> str | None:
+        row = self.conn.execute("SELECT query FROM search_query WHERE id = ?", (query_id,)).fetchone()
+        return row["query"] if row else None
 
     # -- журнал уведомлений --------------------------------------------------
 
