@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: olymp
+      POSTGRES_USER: olymp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-olymp}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # база доступна только с самого сервера
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U olymp -d olymp"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://olymp:${POSTGRES_PASSWORD:-olymp}@db:5432/olymp
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["cli"]   # запускается вручную: docker compose run --rm app ...
+
+volumes:
+  pgdata:
