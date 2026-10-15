@@ -105,6 +105,20 @@ def button_name(o: CatalogOlympiad, limit: int = 50) -> str:
     return "ВсОШ" if o.is_vsosh else short_name(o.name, limit)
 
 
+FILLER = "\u2800"  # пустой символ Брайля: Telegram его не обрезает, в отличие от пробелов
+LEFT_ALIGN_WIDTH = 34  # примерно ширина кнопки на телефоне в символах
+
+
+def left_align(label: str, width: int = LEFT_ALIGN_WIDTH) -> str:
+    """Прижимает подпись кнопки к левому краю.
+
+    Telegram всегда центрирует текст в кнопке. Дополняем короткую подпись справа
+    невидимыми символами до ширины кнопки на телефоне — текст визуально уходит влево.
+    Длинные подписи не трогаем, иначе Telegram обрежет их многоточием.
+    """
+    return label + FILLER * (width - len(label)) if len(label) < width else label
+
+
 def sort_key(text: str) -> str:
     """Сортировка по алфавиту без учёта регистра, кавычек и «ё»."""
     return re.sub(r"[«»\"]", "", text).lower().replace("ё", "е")

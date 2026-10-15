@@ -95,11 +95,11 @@ class Views:
         kb = InlineKeyboardBuilder()
         for level in LEVELS:
             count = len(self.level_items(level))
-            kb.button(text=f"{texts.LEVEL_ICONS[level]} {level} уровень · {count}", callback_data=Nav(a="lvl", q=level))
+            kb.button(text=f"{texts.LEVEL_ICONS[level]} уровень · {count}", callback_data=Nav(a="lvl", q=level))
         kb.button(text="🏆 ВсОШ", callback_data=Nav(a="vsosh"))
-        kb.button(text="🔔 Мои подписки", callback_data=Nav(a="subs"))
-        kb.button(text="ℹ️ Как пользоваться", callback_data=Nav(a="help"))
-        kb.adjust(1)
+        kb.button(text="🔔 Подписки", callback_data=Nav(a="subs"))
+        kb.button(text="ℹ️ Помощь", callback_data=Nav(a="help"))
+        kb.adjust(2)  # шашечкой: по две кнопки в ряд
         return texts.START, kb.as_markup()
 
     # -- списки по уровням ------------------------------------------------------
@@ -123,7 +123,7 @@ class Views:
         kb = InlineKeyboardBuilder()
         for number, (o, _) in enumerate(chunk, start=first):
             kb.row(InlineKeyboardButton(
-                text=f"{number}. {texts.button_name(o, 45)}",
+                text=texts.left_align(f"{number}. {texts.button_name(o, 45)}"),
                 callback_data=Nav(a="card", o=o.id, q=level, p=page, b="l").pack()))
         nav_row = pager_row(page, pages, lambda p: Nav(a="lvl", q=level, p=p))
         if nav_row:
@@ -141,7 +141,7 @@ class Views:
         olympiads = self.user_subscriptions(telegram_id)
         kb = InlineKeyboardBuilder()
         for o in olympiads:
-            kb.button(text=texts.button_name(o), callback_data=Nav(a="card", o=o.id, b="u"))
+            kb.button(text=texts.left_align(texts.button_name(o)), callback_data=Nav(a="card", o=o.id, b="u"))
         kb.button(text="🏠 Меню", callback_data=Nav(a="menu"))
         kb.adjust(1)
         return texts.subscriptions_list(olympiads), kb.as_markup()
@@ -154,7 +154,7 @@ class Views:
         page, pages, chunk = paginate(hits, page)
         kb = InlineKeyboardBuilder()
         for hit in chunk:
-            label = texts.hit_button_label(hit, self.catalog.current_year)
+            label = texts.left_align(texts.hit_button_label(hit, self.catalog.current_year))
             kb.row(InlineKeyboardButton(
                 text=label, callback_data=Nav(a="card", o=hit.olympiad.id, q=query_id, p=page, b="s").pack()))
         nav_row = pager_row(page, pages, lambda p: Nav(a="page", q=query_id, p=p))

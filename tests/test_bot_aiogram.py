@@ -100,7 +100,8 @@ class BotFlowTest(unittest.TestCase):
 
     def buttons(self, call):
         markup = call.reply_markup
-        return [(b.text, b.callback_data) for row in markup.inline_keyboard for b in row] if markup else []
+        # подписи олимпиад дополнены невидимыми символами для выравнивания влево — сравниваем без них
+        return [(b.text.rstrip("\u2800"), b.callback_data) for row in markup.inline_keyboard for b in row] if markup else []
 
     @staticmethod
     def nav(**kwargs) -> str:
@@ -133,9 +134,18 @@ class BotFlowTest(unittest.TestCase):
         labels = [label for label, _ in self.buttons(calls[0])]
         # в тестовом перечне 2026/27: 1 ур. — Физтех, Ломоносов, «Архитектура и искусство»;
         # 2 ур. — НТО, ОММО; 3 ур. — НТО, ОММО
-        self.assertEqual(labels, ["1️⃣ 1 уровень · 3", "2️⃣ 2 уровень · 2", "3️⃣ 3 уровень · 2",
-                                  "🏆 ВсОШ", "🔔 Мои подписки", "ℹ️ Как пользоваться"])
+        self.assertEqual(labels, ["1️⃣ уровень · 3", "2️⃣ уровень · 2", "3️⃣ уровень · 2",
+                                  "🏆 ВсОШ", "🔔 Подписки", "ℹ️ Помощь"])
+        rows = [len(row) for row in calls[0].reply_markup.inline_keyboard]
+        self.assertEqual(rows, [2, 2, 2])
         self.assertEqual(self.storage.stats()["users"], 1)
+
+    def test_olympiad_buttons_left_aligned(self):
+        level1 = self.only_edit(self.feed(self.callback(self.nav(a="lvl", q=1))))
+        raw = [b.text for row in level1.reply_markup.inline_keyboard for b in row]
+        self.assertTrue(raw[0].startswith("1. Архитектура и искусство\u2800"))
+        self.assertEqual(len(raw[0]), 34)
+        self.assertEqual(raw[-1], "🏠 Меню")  # служебные кнопки не дополняются
 
     def test_menu_navigation_edits_message(self):
         help_ = self.only_edit(self.feed(self.callback(self.nav(a="help"))))
