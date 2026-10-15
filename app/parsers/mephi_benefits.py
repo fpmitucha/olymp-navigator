@@ -122,7 +122,7 @@ def resolve_numbers(rules: list[dict], catalog, academic_year: str) -> list[dict
         rule = dict(rule)
         number = rule.pop("rsr_number", None)
         found = catalog.by_number(academic_year, number) if number else None
-        if found and _same(found.name, rule["olympiad"]):
+        if found and (not rule["olympiad"] or _same(found.name, rule["olympiad"])):
             rule["olympiad"] = found.name
         out.append(rule)
     return out

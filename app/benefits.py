@@ -23,6 +23,13 @@ BENEFIT_TYPES = {"bvi": "БВИ", "score100": "100 баллов ЕГЭ", "dvi100
 DIPLOMAS = {"winner": "победителям", "prize": "призёрам", "any": "победителям и призёрам"}
 DOCUMENT_STATUSES = {"draft": "проект", "approved": "утверждено"}
 VSOSH = "ВсОШ"
+# Сокращения в таблицах вузов → названия профилей в перечне (ВсОШ)
+PROFILE_ALIASES = {
+    "искусство (мхк)": "искусство (мировая художественная культура)",
+    "мхк": "искусство (мировая художественная культура)",
+    "технология": "труд (технология)",
+    "обж": "основы безопасности и защиты родины",
+}
 WILDCARD = "*"   # «любая олимпиада перечня» с нужным профилем / предметом и уровнем
 _ROMAN = {1: "I", 2: "II", 3: "III"}
 
@@ -223,6 +230,7 @@ def resolve_import(rules: list[dict], catalog: Catalog) -> tuple[list[dict], lis
 
             def match(name: str) -> str | None:
                 norm = _fix_homoglyphs(name).lower().replace("ё", "е").strip()
+                norm = PROFILE_ALIASES.get(norm, norm)
                 if norm in by_norm:
                     return by_norm[norm]
                 # обрезанное в таблице название: «…химический инжинирин» → единственный профиль с таким началом

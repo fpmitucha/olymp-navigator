@@ -1,11 +1,9 @@
-"""Особые права Сеченовского университета: приложение 5 к правилам приёма «Перечень олимпиад школьников…».
+"""Особые права Сеченовского университета (приложение 5 к правилам приёма, PDF).
 
-Университет даёт только право на 100 баллов (БВИ по олимпиадам школьников не даёт), дипломы за 10–11 класс,
-подтверждение — ЕГЭ или внутреннее испытание от 75 баллов.
-
-Таблица без рамок, ячейки переносятся на несколько строк, поэтому читаем слова с координатами (pdfplumber)
-и раскладываем по колонкам по x: № | олимпиада | профиль | испытание, за которое 100 баллов |
-предмет подтверждения | «право на 100 баллов». Строка данных — та, где в последней колонке «право».
+Университет даёт по олимпиадам РСОШ только «право на 100 баллов» (БВИ не даёт), победителям
+и призёрам, за 10–11 класс, при ЕГЭ от 75 по предмету. Таблица: № | олимпиада | профиль |
+вступительные испытания | предметы подтверждения | право. Строки таблицы разрезаны рамками
+ячеек — их и используем (pdfplumber отдаёт границы как тонкие прямоугольники).
 """
 
 from __future__ import annotations
@@ -13,8 +11,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-COLUMNS = (("num", 0), ("name", 110), ("profile", 295), ("exam", 485), ("confirm", 583), ("right", 680))
-HEADER = re.compile(r"^(№|Полное|Профиль|Общеобразовательные|Предмет|Предоставляемое)")
+SUBJECTS = ["русский язык", "иностранный язык", "математика", "информатика", "физика", "химия",
+            "биология", "история", "обществознание", "литература", "география"]
 
 
 @dataclass
@@ -25,78 +23,68 @@ class SechenovImport:
     warnings: list[str] = field(default_factory=list)
 
 
-def _column(x: float) -> str:
-    name = COLUMNS[0][0]
-    for col, start in COLUMNS:
-        if x >= start:
-            name = col
-    return name
+def split_subjects(text: str) -> list[str]:
+    """«информатика математика» → ["информатика", "математика"]."""
+    text = text.lower().replace("ё", "е")
+    found = [(text.find(s), s) for s in SUBJECTS if s in text]
+    return [s for _, s in sorted(found)]
 
 
-def lines_from_words(words: list[dict]) -> list[dict[str, str]]:
-    """Слова одной страницы → строки {колонка: текст}, сверху вниз."""
-    rows: dict[int, dict[str, list[str]]] = {}
-    for w in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
-        key = next((k for k in rows if abs(k - w["top"]) <= 3), round(w["top"]))
-        rows.setdefault(key, {}).setdefault(_column(w["x0"]), []).append(w["text"])
-    return [{c: " ".join(t) for c, t in rows[k].items()} for k in sorted(rows)]
+def _bands(rects, x0: float, x1: float) -> list[tuple[int, int]]:
+    ys = sorted({round(r["top"]) for r in rects
+                 if r["height"] < 1 and r["width"] > 20 and x0 - 3 <= r["x0"] <= x0 + 8 and r["x1"] >= x1 - 8})
+    return list(zip(ys, ys[1:]))
 
 
-def parse_lines(lines: list[dict[str, str]]) -> SechenovImport:
-    """Собирает олимпиады: название и профиль могут занимать несколько строк."""
-    records: list[dict] = []    # {"name": [...], "entries": [{"profile": [...], "exam": .., "confirm": ..}]}
-    current: dict | None = None
-    in_table = header = False
-    for line in lines:
-        text = " ".join(line.values())
-        if HEADER.match(line.get("num", "") + line.get("name", "")):
-            in_table = header = True   # шапка повторяется на каждой странице и занимает много строк
-            continue
-        if header:
-            header = "баллов)" not in line.get("confirm", "")
-            continue
-        if not in_table or text.startswith("*") or "Приказ Минобрнауки" in text:
-            continue
-        num = line.get("num", "")
-        if re.fullmatch(r"\d+\.", num):
-            current = {"name": [], "entries": []}
-            records.append(current)
-        if current is None:
-            continue
-        if line.get("name"):
-            current["name"].append(line["name"])
-        is_data = line.get("right", "").startswith("право")
-        if is_data:
-            entry = {"profile": [line["profile"]] if line.get("profile") else None,
-                     "exam": line.get("exam", ""), "confirm": line.get("confirm", "")}
-            if entry["profile"] is None and current["entries"]:
-                entry["profile"] = current["entries"][-1]["profile"]   # тот же профиль, другой предмет
-            current["entries"].append(entry)
-        elif current["entries"]:  # перенос текста ячеек на следующую строку
-            last = current["entries"][-1]
-            if line.get("profile"):
-                last["profile"].append(line["profile"])
-            for col in ("exam", "confirm"):
-                if line.get(col):
-                    last[col] += " " + line[col]
+def parse_pages(pages) -> SechenovImport:
+    """pages — страницы pdfplumber. Колонки определяются по вертикальным рамкам шапки."""
     rules, warnings, count = [], [], 0
-    for rec in records:
-        name = re.sub(r"\s+", " ", " ".join(rec["name"])).strip()
-        name = re.sub(r"(\w)- (\w)", r"\1-\2", name)
-        for e in rec["entries"]:
-            count += 1
-            if not e["profile"]:
-                warnings.append(f"без профиля: «{name}»")
+    current: tuple[str, str] | None = None
+    for page in pages:
+        xs = sorted({round(r["x0"]) for r in page.rects if r["width"] < 2 and r["height"] > 5})
+        if len(xs) < 7:
+            continue
+        xs = xs[:7]
+
+        def col(x: float) -> int | None:
+            return next((i for i in range(6) if xs[i] - 3 <= x < xs[i + 1] - 3), None)
+
+        words = sorted(page.extract_words(), key=lambda w: (round(w["top"]), w["x0"]))
+
+        def text(band, c) -> str:
+            return " ".join(w["text"] for w in words
+                            if band[0] <= (w["top"] + w["bottom"]) / 2 < band[1] and col(w["x0"]) == c)
+
+        olympiad_bands = _bands(page.rects, xs[1], xs[2])
+        for band in _bands(page.rects, xs[2], xs[3]):
+            profile, _, confirm, right = (text(band, c) for c in (2, 3, 4, 5))
+            if not profile or profile.startswith("Профиль") or "100 баллов" not in right:
                 continue
-            profile = re.sub(r"(\w)- (\w)", r"\1-\2", " ".join(e["profile"])).strip().lower()
-            exam, confirm = e["exam"].strip().lower(), e["confirm"].strip().lower()
-            rule = {"olympiad": name, "profiles": [profile], "benefit": "score100", "diploma": "any",
-                    "grades": [10, 11], "confirm_min_score": 75, "programs": None,
-                    "score_for": f"ЕГЭ по предмету «{exam}»" if exam else None}
-            if confirm and confirm != profile:
-                rule["confirm_subject"] = confirm
-            if rule not in rules:
-                rules.append(rule)
+            ob = next((o for o in olympiad_bands if o[0] - 1 <= band[0] and band[1] <= o[1] + 1), None)
+            if ob and re.match(r"\d+\.", text(ob, 0)):
+                current = (text(ob, 0), text(ob, 1))
+            if current is None:
+                warnings.append(f"строка без олимпиады: {profile}")
+                continue
+            count += 1
+            subjects = split_subjects(confirm)
+            if not subjects:
+                warnings.append(f"{current[1][:40]}: не разобран предмет «{confirm}»")
+                continue
+            name = re.sub(r"\s*\(.*\)\s*$", "", current[1]).replace('"', "«", 1)
+            name = re.sub(r'"', "»", name, count=1) if "«" in name else name
+            for subject in subjects:
+                rules.append({
+                    "olympiad": re.sub(r"\s+", " ", name).strip(),
+                    "profiles": [profile.lower()],
+                    "benefit": "score100",
+                    "diploma": "any",
+                    "grades": [10, 11],
+                    "confirm_min_score": 75,
+                    "programs": None,
+                    "score_for": f"ЕГЭ по предмету «{subject}»",
+                    **({"confirm_subject": subject} if subject != profile.lower() else {}),
+                })
     return SechenovImport(rules=rules, rows=count, warnings=warnings)
 
 
@@ -106,9 +94,8 @@ def parse_sechenov_pdf(path) -> SechenovImport:
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("Нужен pdfplumber: py -m pip install pdfplumber") from exc
     with pdfplumber.open(path) as pdf:
-        lines = [line for page in pdf.pages for line in lines_from_words(page.extract_words())]
+        result = parse_pages(pdf.pages)
         first = pdf.pages[0].extract_text() or ""
-    result = parse_lines(lines)
     m = re.search(r"Перечень олимпиад школьников,.*?учебный год", first, re.S)
     result.title = re.sub(r"\s+", " ", m.group(0)) if m else ""
     return result
