@@ -324,8 +324,14 @@ async def run(token: str, catalog: Catalog, storage: Storage) -> None:
         BotCommand(command="help", description="Как пользоваться"),
     ])
     me = await bot.get_me()
+    # Если у бота остался вебхук (например, от другого сервиса), getUpdates не получит сообщений
+    webhook = await bot.get_webhook_info()
+    if webhook.url:
+        log.warning("У бота был установлен вебхук %s — удаляю, чтобы работал опрос", webhook.url)
+        await bot.delete_webhook()
     log.info("Бот @%s запущен. Олимпиад в каталоге: %s, годы: %s",
              me.username, len(catalog.olympiads), ", ".join(catalog.years))
+    print(f"\nНапишите боту: https://t.me/{me.username}  (каждое сообщение появится здесь строкой «Update id=…»)\n")
     reminders = asyncio.create_task(reminder_loop(storage, catalog, make_sender(bot)))
     try:
         await dp.start_polling(bot)
