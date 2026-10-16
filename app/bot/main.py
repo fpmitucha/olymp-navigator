@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import logging
 import math
 import socket
@@ -28,7 +29,9 @@ from aiogram.exceptions import (
 )
 from aiogram.filters import Command, CommandStart
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot import texts
@@ -52,7 +55,8 @@ class Nav(CallbackData, prefix="n"):
 
     a — действие: menu, help, subs, lvl (список уровня), vsosh, page (результаты поиска),
         card, sub, unsub, ben (льготы олимпиады), benu (льготы олимпиады в вузе), unis (список вузов),
-        uni (вуз), usub / uuns (подписка на обновления вуза, q — номер вуза), fit / fitp / fitw / fitr (подбор по диплому: профиль → победитель/призёр → класс → итог), noop
+        uni (вуз), pdfp (выбор профиля для PDF), pdf / pdff (прислать PDF: по профилю / по итогу подбора),
+        usub / uuns (подписка на обновления вуза, q — номер вуза), fit / fitp / fitw / fitr (подбор по диплому: профиль → победитель/призёр → класс → итог), noop
     o — id олимпиады; q — id сохранённого запроса или номер уровня; p — страница списка
     b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "l" — список уровня,
         "u" — подписки
@@ -225,6 +229,7 @@ class Views:
         keep = dict(o=o.id, q=nav.q, p=nav.p, b=nav.b)
         if entries:
             kb.row(InlineKeyboardButton(text="🎯 Подобрать по моему диплому", callback_data=Nav(a="fit", **keep).pack()))
+            kb.row(InlineKeyboardButton(text="📄 Скачать PDF", callback_data=Nav(a="pdfp", **keep).pack()))
         for i in range(0, len(buttons), 2):
             kb.row(*buttons[i:i + 2])
         kb.row(InlineKeyboardButton(text="◀️ К олимпиаде", callback_data=Nav(
@@ -294,9 +299,62 @@ class Views:
             a="benu", d=unis.index(u), **keep).pack()) for u, _ in entries]
         for i in range(0, len(buttons), 3):
             kb.row(*buttons[i:i + 3])
+        if entries:
+            kb.row(InlineKeyboardButton(text="📄 Скачать PDF", callback_data=Nav(a="pdff", d=nav.d, **keep).pack()))
         kb.row(InlineKeyboardButton(text="🔄 Другой диплом", callback_data=Nav(a="fit", **keep).pack()),
                back_to_benefits)
         return text, kb.as_markup()
+
+    def pdf_profiles(self, o: CatalogOlympiad, nav: Nav) -> Screen | None:
+        """Перед PDF — выбор профиля: по всей олимпиаде файл вышел бы на сотню страниц."""
+        profiles = olympiad_profiles(self.benefits, o.id)
+        if not profiles:
+            return None
+        keep = dict(o=o.id, q=nav.q, p=nav.p, b=nav.b)
+        kb = InlineKeyboardBuilder()
+        for i, name in enumerate(profiles):
+            kb.button(text=name[:40], callback_data=Nav(a="pdf", d=i * 100, **keep))
+        kb.adjust(2)
+        kb.row(InlineKeyboardButton(text="🎓 К льготам", callback_data=Nav(a="ben", **keep).pack()))
+        name = texts.escape("ВсОШ" if o.is_vsosh else texts.short_name(o.name, 60))
+        return (f"📄 <b>PDF со льготами: «{name}»</b>\n\nПо какому профилю? В файле — все вузы, все программы "
+                f"и условия по ЕГЭ для этого профиля."), kb.as_markup()
+
+    def pdf_document(self, o: CatalogOlympiad, nav: Nav) -> tuple[bytes, str, str] | None:
+        """(файл, имя, подпись). pdf — по профилю целиком; pdff — по итогу подбора (профиль, диплом, класс)."""
+        from app.export_pdf import benefits_pdf, pdf_filename
+
+        profiles = olympiad_profiles(self.benefits, o.id)
+        pi, dip, grade_code = nav.d // 100, nav.d // 10 % 10, nav.d % 10
+        if pi >= len(profiles):
+            return None
+        profile = profiles[pi]
+        level, level_year = profile_level(o, profile, self.catalog.current_year)
+        notes = []
+        if nav.a == "pdff":
+            diploma = DIPLOMA_CHOICES.get(dip)
+            if diploma is None:
+                return None
+            grade = grade_code + 8 if grade_code else None
+            entries = fitting(self.benefits, o.id, profile, diploma, grade, level)
+            parts = [f"профиль «{profile}»", texts.DIPLOMA_TITLES[diploma]] + ([f"{grade} класс"] if grade else [])
+            if level and not o.is_vsosh:
+                parts.append(f"уровень {level} в перечне {level_year}")
+            subtitle = " · ".join(parts).capitalize()
+            if diploma == "prize" and texts.prize_bvi_affected([r for _, rs in entries for r in rs]):
+                notes.append(texts.PRIZE_BVI_WARNING)
+        else:
+            entries = [(u, [r for r in rules if not r.profiles or profile in r.profiles])
+                       for u, rules in self.benefits.for_olympiad(o.id)]
+            entries = [(u, rules) for u, rules in entries if rules]
+            subtitle = f"Профиль «{profile}» · победители и призёры · все вузы"
+            if texts.prize_bvi_affected([r for _, rs in entries for r in rs]):
+                notes.append(texts.PRIZE_BVI_WARNING)
+        notes += texts.not_in_list_banner(o, [r for _, rs in entries for r in rs], self.admission_year)
+        data = benefits_pdf(o, entries, self.admission_year, subtitle=subtitle, notes=notes, today=self.today())
+        name = texts.escape("ВсОШ" if o.is_vsosh else texts.short_name(o.name, 60))
+        caption = f"📄 Льготы: «{name}» — {texts.escape(subtitle[0].lower() + subtitle[1:])}"
+        return data, pdf_filename(o, _slug(profile)), caption
 
     def universities(self) -> Screen:
         unis = self.benefits.latest()
@@ -335,6 +393,12 @@ class Views:
             kb.button(text="🏠 Меню", callback_data=Nav(a="menu"))
             return texts.NOT_FOUND.format(query=texts.escape(query)), kb.as_markup()
         return self.results(self.storage.save_query(query), 0)
+
+
+def _slug(text: str) -> str:
+    from app.export_pdf import _translit
+
+    return re.sub(r"[^a-z0-9]+", "-", _translit(text.lower())).strip("-")[:30]
 
 
 def paginate(items: list, page: int) -> tuple[int, int, list]:
@@ -454,7 +518,7 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await callback.answer("Поиск устарел, отправь запрос заново.", show_alert=True)
                 return
             await show(callback, screen)
-        elif nav.a in ("card", "sub", "unsub", "ben", "benu", "fit", "fitp", "fitw", "fitr"):
+        elif nav.a in ("card", "sub", "unsub", "ben", "benu", "fit", "fitp", "fitw", "fitr", "pdfp", "pdf", "pdff"):
             o = catalog.get(nav.o)
             if o is None:
                 await callback.answer("Олимпиада не найдена — перечень обновился. Поищи её заново.", show_alert=True)
@@ -463,6 +527,19 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await show(callback, views.card(o, user_id, nav))
             elif nav.a == "ben":
                 await show(callback, views.olympiad_benefits(o, nav))
+            elif nav.a in ("pdf", "pdff"):
+                await send_pdf(callback, o, nav)
+                return
+            elif nav.a == "pdfp":
+                profiles = olympiad_profiles(views.benefits, o.id)
+                if len(profiles) == 1:  # профиль один — сразу файл
+                    await send_pdf(callback, o, Nav(a="pdf", o=o.id, q=nav.q, p=nav.p, b=nav.b, d=0))
+                    return
+                screen = views.pdf_profiles(o, nav)
+                if screen is None:
+                    await stale_button(callback)
+                    return
+                await show(callback, screen)
             elif nav.a in ("benu", "fit", "fitp", "fitw", "fitr"):
                 screen = views.olympiad_university(o, nav) if nav.a == "benu" else views.diploma_fit(o, nav)
                 if screen is None:
@@ -476,6 +553,17 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
             await stale_button(callback)
             return
         await callback.answer()
+
+    async def send_pdf(callback: CallbackQuery, o: CatalogOlympiad, nav: Nav) -> None:
+        await callback.answer("Готовлю PDF…")
+        made = await asyncio.to_thread(views.pdf_document, o, nav)
+        if not isinstance(callback.message, Message):
+            return
+        if made is None:
+            await callback.message.answer("Эта кнопка устарела — открой льготы олимпиады заново.")
+            return
+        data, filename, caption = made
+        await callback.message.answer_document(BufferedInputFile(data, filename=filename), caption=caption)
 
     async def toggle_subscription(callback: CallbackQuery, o: CatalogOlympiad, nav: Nav) -> None:
         user_id = callback.from_user.id

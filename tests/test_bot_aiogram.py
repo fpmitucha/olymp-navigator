@@ -47,6 +47,9 @@ if HAS_AIOGRAM:
                     message_id=self._next_id, date=datetime.now(), text=method.text,
                     chat=Chat(id=method.chat_id, type="private"), reply_markup=method.reply_markup,
                 )
+            if type(method).__name__ == "SendDocument":
+                self._next_id += 1
+                return Message(message_id=self._next_id, date=datetime.now(), chat=Chat(id=method.chat_id, type="private"))
             if isinstance(method, (AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText)):
                 if self.edit_error and isinstance(method, EditMessageText):
                     raise TelegramBadRequest(method=method, message=self.edit_error)
@@ -342,6 +345,23 @@ class BotFlowTest(unittest.TestCase):
         self.assertNotIn("🏅 БВИ", prize11.text)
         back = self.only_edit(self.feed(self.callback(self.button(prize11, "🎓 К льготам"))))
         self.assertEqual(back.text, benefits.text)
+
+    def test_pdf_export(self):
+        from aiogram.methods import SendDocument
+
+        card = self.sent(self.feed(self.message("Физтех")))[0]
+        benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
+        calls = self.feed(self.callback(self.button(benefits, "📄 Скачать PDF")))
+        docs = [c for c in calls if isinstance(c, SendDocument)]
+        if not docs:  # у олимпиады несколько профилей — сначала выбор профиля
+            choose = self.only_edit(calls)
+            self.assertIn("По какому профилю", choose.text)
+            docs = [c for c in self.feed(self.callback(self.button(choose, "математика")))
+                    if isinstance(c, SendDocument)]
+        self.assertEqual(len(docs), 1)
+        self.assertTrue(docs[0].document.data.startswith(b"%PDF"))
+        self.assertTrue(docs[0].document.filename.endswith(".pdf"))
+        self.assertIn("Льготы", docs[0].caption)
 
     def test_make_bot_connection_options(self):
         import socket

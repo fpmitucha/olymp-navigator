@@ -5,6 +5,7 @@ lxml>=5.0
 
 # Telegram-бот
 aiogram>=3.28,<4
+reportlab>=4.0         # PDF со льготами (кнопка «📄 Скачать PDF»)
 # aiohttp-socks>=0.10   # только если нужен прокси для Telegram (TELEGRAM_PROXY)
 
 # Подключатся на следующих этапах:

@@ -559,6 +559,26 @@ def cmd_benefits_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_pdf(args: argparse.Namespace) -> int:
+    from app.export_pdf import benefits_pdf, pdf_filename
+
+    catalog = _catalog()
+    benefits = _benefits(catalog)
+    hits = catalog.search(args.olympiad, limit=1)
+    if not hits:
+        raise SystemExit(f"Олимпиада «{args.olympiad}» не найдена")
+    o = hits[0].olympiad
+    entries = [(u, [r for r in rules if not args.profile or not r.profiles or args.profile in r.profiles])
+               for u, rules in benefits.for_olympiad(o.id)]
+    entries = [(u, rules) for u, rules in entries if rules]
+    admission_year = int(catalog.current_year[:4]) + 1
+    subtitle = f"Профиль «{args.profile}» · все вузы" if args.profile else ""
+    out = Path(args.out or pdf_filename(o, args.profile or ""))
+    out.write_bytes(benefits_pdf(o, entries, admission_year, subtitle=subtitle))
+    print(f"{o.name}: вузов {len(entries)}, правил {sum(len(r) for _, r in entries)} → {out}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -786,6 +806,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default="https://www.fa.ru/upload/constructor/918/oxs36ll62co031uhysc4la3e86r9numg/"
                                     "Perechen-olimpiad-shkolnikov-2026.pdf")
     p.set_defaults(func=cmd_benefits_import_fa)
+    p = ben.add_parser("pdf", help="PDF со льготами олимпиады (как в боте)")
+    p.add_argument("olympiad", help="название или часть названия")
+    p.add_argument("--profile", default="", help="профиль, например «математика»")
+    p.add_argument("--out", default="")
+    p.set_defaults(func=cmd_benefits_pdf)
     p = ben.add_parser("watch", help="проверить страницы приёма вузов: не вышли ли льготы на следующий год")
     p.add_argument("--year", type=int, default=0, help="год приёма (по умолчанию — ближайший)")
     p.set_defaults(func=cmd_benefits_watch)
