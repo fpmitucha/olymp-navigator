@@ -32,7 +32,9 @@ from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, Inlin
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot import texts
-from app.bot.notifier import TemporaryError, UserBlocked, moscow_now, reminder_loop, stages_sync_loop
+from app.bot.notifier import (
+    TemporaryError, UserBlocked, benefits_watch_loop, moscow_now, reminder_loop, stages_sync_loop,
+)
 from app.bot.storage import Storage
 from app.benefits import DIPLOMA_CHOICES, BenefitsCatalog, fitting, olympiad_profiles, profile_level
 from app.catalog import Catalog, CatalogOlympiad
@@ -50,7 +52,7 @@ class Nav(CallbackData, prefix="n"):
 
     a — действие: menu, help, subs, lvl (список уровня), vsosh, page (результаты поиска),
         card, sub, unsub, ben (льготы олимпиады), benu (льготы олимпиады в вузе), unis (список вузов),
-        uni (вуз), fit / fitp / fitw / fitr (подбор по диплому: профиль → победитель/призёр → класс → итог), noop
+        uni (вуз), usub / uuns (подписка на обновления вуза, q — номер вуза), fit / fitp / fitw / fitr (подбор по диплому: профиль → победитель/призёр → класс → итог), noop
     o — id олимпиады; q — id сохранённого запроса или номер уровня; p — страница списка
     b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "l" — список уровня,
         "u" — подписки
@@ -305,15 +307,22 @@ class Views:
         kb.adjust(1)
         return texts.universities_list(unis, self.admission_year), kb.as_markup()
 
-    def university(self, index: int) -> Screen | None:
+    def university(self, index: int, telegram_id: int = 0) -> Screen | None:
         unis = self.benefits.latest()
         if not 0 <= index < len(unis):
             return None
+        u = unis[index]
         kb = InlineKeyboardBuilder()
-        kb.button(text="◀️ К вузам", callback_data=Nav(a="unis"))
-        kb.button(text="🏠 Меню", callback_data=Nav(a="menu"))
-        kb.adjust(2)
-        return texts.university_benefits(unis[index], self.admission_year), kb.as_markup()
+        if self.storage.is_subscribed_university(telegram_id, u.university):
+            kb.row(InlineKeyboardButton(text="🔕 Не сообщать об обновлениях",
+                                        callback_data=Nav(a="uuns", q=index).pack()))
+        else:
+            label = (f"🔔 Сообщить, когда выйдут льготы на {self.admission_year}"
+                     if u.admission_year < self.admission_year or u.is_draft else "🔔 Сообщать об обновлениях")
+            kb.row(InlineKeyboardButton(text=label, callback_data=Nav(a="usub", q=index).pack()))
+        kb.row(InlineKeyboardButton(text="◀️ К вузам", callback_data=Nav(a="unis").pack()),
+               InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+        return texts.university_benefits(u, self.admission_year), kb.as_markup()
 
     def search(self, query: str, telegram_id: int) -> Screen:
         """Экран после поиска: одна олимпиада — сразу карточка, иначе список."""
@@ -412,8 +421,23 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
             await show(callback, views.level_list(nav.q, nav.p))
         elif nav.a == "unis":
             await show(callback, views.universities())
+        elif nav.a in ("usub", "uuns"):
+            unis = views.benefits.latest()
+            if not 0 <= nav.q < len(unis):
+                await stale_button(callback)
+                return
+            name = unis[nav.q].university
+            if nav.a == "usub":
+                storage.subscribe_university(user_id, name)
+                toast = f"Сообщу, когда {name} опубликует новые документы о льготах"
+            else:
+                storage.unsubscribe_university(user_id, name)
+                toast = f"Больше не сообщаю об обновлениях {name}"
+            await show(callback, views.university(nav.q, user_id))
+            await callback.answer(toast)
+            return
         elif nav.a == "uni":
-            screen = views.university(nav.q)
+            screen = views.university(nav.q, user_id)
             if screen is None:
                 await stale_button(callback)
                 return
@@ -545,6 +569,13 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
         from app.fetch import fetch_html
 
         tasks.append(asyncio.create_task(stages_sync_loop(catalog, storage.path, fetch_html)))
+    if storage.path != ":memory:":
+        from app.config import PROJECT_ROOT, settings
+
+        admission_year = int(catalog.current_year[:4]) + 1
+        tasks.append(asyncio.create_task(benefits_watch_loop(
+            storage.path, PROJECT_ROOT / "benefits" / "watch" / "sources.json", admission_year,
+            make_sender(bot), admin_id=settings.bot_admin_id)))
     try:
         await dp.start_polling(bot)
     finally:

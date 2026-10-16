@@ -180,3 +180,51 @@ async def reminder_loop(storage: Storage, catalog: Catalog, send: SendFn, interv
             except Exception:  # noqa: BLE001 — цикл не должен падать
                 log.exception("Сбой рассылки напоминаний")
         await asyncio.sleep(interval)
+
+
+BENEFITS_WATCH_EVERY = timedelta(hours=6)
+BENEFITS_WATCH_KEY = "benefits_watched_at"
+
+
+async def benefits_watch_loop(db_path: str, sources_path, admission_year: int, send: SendFn,
+                              admin_id: int = 0, check_every: float = 30 * 60) -> None:
+    """Раз в 6 часов (днём) проверяет страницы приёма вузов; находки — подписчикам вуза и администратору."""
+    from app.benefits_watch import load_sources, run_watch
+    from app.fetch import fetch_bytes, fetch_html
+
+    def check():
+        storage = Storage(db_path)
+        try:
+            last = storage.get_meta(BENEFITS_WATCH_KEY)
+            now = datetime.now(timezone.utc)
+            if last and now - datetime.fromisoformat(last) < BENEFITS_WATCH_EVERY:
+                return None, {}
+            report = run_watch(storage, load_sources(sources_path), admission_year, fetch_html, fetch_bytes)
+            storage.set_meta(BENEFITS_WATCH_KEY, now.isoformat(timespec="seconds"))
+            by_uni: dict[str, list] = {}
+            for f in report.findings:
+                by_uni.setdefault(f.university, []).append(f)
+            return report, {u: (fs, storage.university_subscribers(u)) for u, fs in by_uni.items()}
+        finally:
+            storage.close()
+
+    while True:
+        if not is_quiet_time(moscow_now()):
+            try:
+                report, per_uni = await asyncio.to_thread(check)
+                if report is not None:
+                    if report.errors:
+                        log.info("Слежение за вузами: не открылись %s", "; ".join(report.errors))
+                    for university, (findings, users) in per_uni.items():
+                        log.info("Слежение за вузами: %s — %s", university, [f.url for f in findings])
+                        text = texts.benefits_published(university, findings, admission_year)
+                        for telegram_id in dict.fromkeys(([admin_id] if admin_id else []) + users):
+                            try:
+                                await send(telegram_id, text)
+                            except Exception:  # noqa: BLE001 — одному не дошло, остальным отправим
+                                log.exception("Не отправилось сообщение о документах %s пользователю %s",
+                                              university, telegram_id)
+                            await asyncio.sleep(SEND_PAUSE)
+            except Exception:  # noqa: BLE001
+                log.exception("Сбой слежения за вузами")
+        await asyncio.sleep(check_every)

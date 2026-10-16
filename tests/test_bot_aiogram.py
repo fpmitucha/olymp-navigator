@@ -310,7 +310,14 @@ class BotFlowTest(unittest.TestCase):
         self.assertIn("🎓 <b>Вузы — 1</b>", unis.text)
         uni = self.only_edit(self.feed(self.callback(self.button(unis, "Тестовый вуз"))))
         self.assertIn("🏅 <b>БВИ — победителям</b>", uni.text)
-        self.assertEqual([label for label, _ in self.buttons(uni)], ["◀️ К вузам", "🏠 Меню"])
+        self.assertEqual([label for label, _ in self.buttons(uni)],
+                         ["🔔 Сообщать об обновлениях", "◀️ К вузам", "🏠 Меню"])
+        subscribed = self.only_edit(self.feed(self.callback(self.button(uni, "🔔"))))
+        self.assertTrue(self.storage.is_subscribed_university(USER_ID, "Тестовый вуз"))
+        self.assertEqual(self.storage.university_subscribers("Тестовый вуз"), [USER_ID])
+        self.assertIn("🔕 Не сообщать об обновлениях", [label for label, _ in self.buttons(subscribed)])
+        self.only_edit(self.feed(self.callback(self.button(subscribed, "🔕"))))
+        self.assertFalse(self.storage.is_subscribed_university(USER_ID, "Тестовый вуз"))
         stale = self.feed(self.callback(self.nav(a="uni", q=99)))
         self.assertTrue(next(c for c in stale if isinstance(c, AnswerCallbackQuery)).show_alert)
 

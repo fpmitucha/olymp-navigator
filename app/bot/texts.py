@@ -738,3 +738,17 @@ def fit_result(o: CatalogOlympiad, profile: str, diploma: str, grade: int | None
         lines.append("")
     lines.append("<i>Программы целиком — кнопкой вуза ниже. Всегда сверяй с правилами приёма вуза.</i>")
     return _fit(lines, more="Остальные вузы — кнопками ниже.")
+
+
+# ---------------------------------------------------------------------------
+# Слежение за вузами
+# ---------------------------------------------------------------------------
+
+def benefits_published(university: str, findings: list, admission_year: int) -> str:
+    """Вуз выложил новый документ об особых правах."""
+    lines = [f"🎓 <b>{escape(university)}: новые документы о приёме {admission_year}</b>", ""]
+    for f in findings[:5]:
+        lines.append(f'• <a href="{escape(f.url, quote=True)}">{escape(short_name(f.title, 90))}</a>')
+    lines += ["", "Похоже, вуз опубликовал особые права для олимпиадников. Мы проверим документ и обновим льготы "
+                  "в боте — до этого в боте данные прошлого года."]
+    return "\n".join(lines)

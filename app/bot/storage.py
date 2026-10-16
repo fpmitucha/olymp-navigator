@@ -45,6 +45,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS stage_external_idx ON stage (external_id) WHER
 -- ручные этапы (из CSV) уникальны по смыслу, загруженные с сайта — по id события
 CREATE UNIQUE INDEX IF NOT EXISTS stage_manual_idx ON stage (olympiad_id, academic_year, kind, title, profile)
     WHERE external_id IS NULL;
+CREATE TABLE IF NOT EXISTS university_subscription (  -- «сообщить, когда вуз выложит льготы»
+    telegram_id  INTEGER NOT NULL REFERENCES bot_user(telegram_id) ON DELETE CASCADE,
+    university   TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (telegram_id, university)
+);
 CREATE TABLE IF NOT EXISTS meta (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
@@ -217,6 +223,31 @@ class Storage:
         )
         self.conn.commit()
         return len(rows), cur.rowcount
+
+    def subscribe_university(self, telegram_id: int, university: str) -> bool:
+        self.touch_user(telegram_id)
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO university_subscription (telegram_id, university, created_at) VALUES (?, ?, ?)",
+            (telegram_id, university, _now()))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def unsubscribe_university(self, telegram_id: int, university: str) -> bool:
+        cur = self.conn.execute(
+            "DELETE FROM university_subscription WHERE telegram_id = ? AND university = ?", (telegram_id, university))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def is_subscribed_university(self, telegram_id: int, university: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM university_subscription WHERE telegram_id = ? AND university = ?",
+            (telegram_id, university)).fetchone() is not None
+
+    def university_subscribers(self, university: str) -> list[int]:
+        rows = self.conn.execute(
+            "SELECT s.telegram_id FROM university_subscription s JOIN bot_user u USING (telegram_id) "
+            "WHERE s.university = ? AND u.is_active = 1 ORDER BY s.telegram_id", (university,))
+        return [r[0] for r in rows]
 
     def get_meta(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()

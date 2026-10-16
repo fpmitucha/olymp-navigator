@@ -534,6 +534,31 @@ def cmd_benefits_import_fa(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_watch(args: argparse.Namespace) -> int:
+    from app.benefits_watch import load_sources, run_watch
+    from app.bot.storage import Storage
+    from app.config import PROJECT_ROOT
+    from app.fetch import fetch_bytes, fetch_html
+
+    catalog = _catalog()
+    year = args.year or int(catalog.current_year[:4]) + 1
+    storage = Storage(settings.bot_db_path)
+    try:
+        report = run_watch(storage, load_sources(PROJECT_ROOT / "benefits" / "watch" / "sources.json"),
+                           year, fetch_html, fetch_bytes)
+    finally:
+        storage.close()
+    if report.baseline:
+        print(f"Первый запуск: запомнил, что сейчас на страницах вузов. Дальше буду сообщать о новом (приём {year}).")
+    for f in report.findings:
+        print(f"★ {f.university}: {f.title}\n    {f.url}")
+    if not report.findings and not report.baseline:
+        print(f"Новых документов о приёме {year} нет.")
+    for e in report.errors:
+        print(f"  ? не открылось: {e}")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -761,6 +786,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default="https://www.fa.ru/upload/constructor/918/oxs36ll62co031uhysc4la3e86r9numg/"
                                     "Perechen-olimpiad-shkolnikov-2026.pdf")
     p.set_defaults(func=cmd_benefits_import_fa)
+    p = ben.add_parser("watch", help="проверить страницы приёма вузов: не вышли ли льготы на следующий год")
+    p.add_argument("--year", type=int, default=0, help="год приёма (по умолчанию — ближайший)")
+    p.set_defaults(func=cmd_benefits_watch)
     mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
     p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
     p.add_argument("source", nargs="?", default=mephi_url)
