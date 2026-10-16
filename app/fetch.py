@@ -28,6 +28,10 @@ def fetch_bytes(url: str, *, retries: int = 3) -> bytes:
     return _get(url, retries).content
 
 
+class PageGone(RuntimeError):
+    """Страницы нет (404 / 410) — повторять запрос бессмысленно."""
+
+
 def _get(url: str, retries: int) -> requests.Response:
     global _last_request_at
     error: Exception | None = None
@@ -38,6 +42,8 @@ def _get(url: str, retries: int) -> requests.Response:
         try:
             response = _session.get(url, timeout=settings.request_timeout)
             _last_request_at = time.monotonic()
+            if response.status_code in (404, 410):
+                raise PageGone(f"Страницы нет ({response.status_code}): {url}")
             response.raise_for_status()
             return response
         except requests.RequestException as exc:
