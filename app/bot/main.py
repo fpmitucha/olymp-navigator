@@ -34,7 +34,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot import texts
 from app.bot.notifier import TemporaryError, UserBlocked, moscow_now, reminder_loop, stages_sync_loop
 from app.bot.storage import Storage
-from app.benefits import BenefitsCatalog
+from app.benefits import DIPLOMA_CHOICES, BenefitsCatalog, fitting, olympiad_profiles, profile_level
 from app.catalog import Catalog, CatalogOlympiad
 
 log = logging.getLogger(__name__)
@@ -49,11 +49,13 @@ class Nav(CallbackData, prefix="n"):
     """Данные кнопок. Вся навигация — через этот класс (лимит Telegram 64 байта).
 
     a — действие: menu, help, subs, lvl (список уровня), vsosh, page (результаты поиска),
-        card, sub, unsub, ben (льготы олимпиады), unis (список вузов), uni (вуз), noop
+        card, sub, unsub, ben (льготы олимпиады), benu (льготы олимпиады в вузе), unis (список вузов),
+        uni (вуз), fit / fitp / fitw / fitr (подбор по диплому: профиль → победитель/призёр → класс → итог), noop
     o — id олимпиады; q — id сохранённого запроса или номер уровня; p — страница списка
     b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "l" — список уровня,
         "u" — подписки
-    d — 1, если карточка открыта в подробном виде
+    d — 1, если карточка открыта в подробном виде; в benu — номер вуза; в подборе — выбор:
+        номер профиля * 100 + (1 победитель | 2 призёр) * 10 + (класс − 8)
     """
 
     a: str
@@ -218,6 +220,9 @@ class Views:
         unis = self.benefits.latest()
         buttons = [InlineKeyboardButton(text=f"📄 {u.university}", callback_data=Nav(
             a="benu", o=o.id, q=nav.q, p=nav.p, b=nav.b, d=unis.index(u)).pack()) for u, _ in entries]
+        keep = dict(o=o.id, q=nav.q, p=nav.p, b=nav.b)
+        if entries:
+            kb.row(InlineKeyboardButton(text="🎯 Подобрать по моему диплому", callback_data=Nav(a="fit", **keep).pack()))
         for i in range(0, len(buttons), 2):
             kb.row(*buttons[i:i + 2])
         kb.row(InlineKeyboardButton(text="◀️ К олимпиаде", callback_data=Nav(
@@ -239,6 +244,56 @@ class Views:
         kb.row(InlineKeyboardButton(text="◀️ Ко всем вузам", callback_data=Nav(
             a="ben", o=o.id, q=nav.q, p=nav.p, b=nav.b).pack()),
             InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+        return text, kb.as_markup()
+
+    def diploma_fit(self, o: CatalogOlympiad, nav: Nav) -> Screen | None:
+        """Подбор по диплому. Шаги: fit — профиль, fitp — победитель/призёр, fitw — класс, fitr — итог."""
+        profiles = olympiad_profiles(self.benefits, o.id)
+        if not profiles:
+            return None
+        keep = dict(o=o.id, q=nav.q, p=nav.p, b=nav.b)
+        step = nav.a
+        if step == "fit" and len(profiles) == 1:
+            step, nav = "fitp", Nav(a="fitp", d=0, **keep)
+        pi, dip, grade_code = nav.d // 100, nav.d // 10 % 10, nav.d % 10
+        if pi >= len(profiles) or (step in ("fitw", "fitr") and dip not in DIPLOMA_CHOICES):
+            return None
+        profile = profiles[pi]
+        diploma = DIPLOMA_CHOICES.get(dip)
+        back_to_benefits = InlineKeyboardButton(text="🎓 К льготам", callback_data=Nav(a="ben", **keep).pack())
+        kb = InlineKeyboardBuilder()
+        if step == "fit":
+            for i, name in enumerate(profiles):
+                kb.button(text=name[:40], callback_data=Nav(a="fitp", d=i * 100, **keep))
+            kb.adjust(2)
+            kb.row(back_to_benefits)
+            return texts.fit_question(o, "profile"), kb.as_markup()
+        back_step = InlineKeyboardButton(
+            text="◀️ Назад", callback_data=Nav(a={"fitp": "fit", "fitw": "fitp", "fitr": "fitw"}[step],
+                                              d={"fitp": 0, "fitw": pi * 100, "fitr": pi * 100 + dip * 10}[step],
+                                              **keep).pack())
+        if step == "fitp":
+            kb.row(InlineKeyboardButton(text="🥇 Победитель", callback_data=Nav(a="fitw", d=pi * 100 + 10, **keep).pack()),
+                   InlineKeyboardButton(text="🥈 Призёр", callback_data=Nav(a="fitw", d=pi * 100 + 20, **keep).pack()))
+            kb.row(back_step, back_to_benefits)
+            return texts.fit_question(o, "diploma", profile), kb.as_markup()
+        if step == "fitw":
+            grades = (9, 10, 11) if o.is_vsosh else (10, 11)
+            kb.row(*[InlineKeyboardButton(text=f"{g} класс", callback_data=Nav(
+                a="fitr", d=pi * 100 + dip * 10 + g - 8, **keep).pack()) for g in grades])
+            kb.row(back_step, back_to_benefits)
+            return texts.fit_question(o, "grade", profile, diploma), kb.as_markup()
+        grade = grade_code + 8 if grade_code else None
+        level, level_year = profile_level(o, profile, self.catalog.current_year)
+        entries = fitting(self.benefits, o.id, profile, diploma, grade, level)
+        text = texts.fit_result(o, profile, diploma, grade, level, level_year, entries, self.admission_year)
+        unis = self.benefits.latest()
+        buttons = [InlineKeyboardButton(text=f"📄 {u.university}", callback_data=Nav(
+            a="benu", d=unis.index(u), **keep).pack()) for u, _ in entries]
+        for i in range(0, len(buttons), 3):
+            kb.row(*buttons[i:i + 3])
+        kb.row(InlineKeyboardButton(text="🔄 Другой диплом", callback_data=Nav(a="fit", **keep).pack()),
+               back_to_benefits)
         return text, kb.as_markup()
 
     def universities(self) -> Screen:
@@ -375,7 +430,7 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await callback.answer("Поиск устарел, отправь запрос заново.", show_alert=True)
                 return
             await show(callback, screen)
-        elif nav.a in ("card", "sub", "unsub", "ben", "benu"):
+        elif nav.a in ("card", "sub", "unsub", "ben", "benu", "fit", "fitp", "fitw", "fitr"):
             o = catalog.get(nav.o)
             if o is None:
                 await callback.answer("Олимпиада не найдена — перечень обновился. Поищи её заново.", show_alert=True)
@@ -384,8 +439,8 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await show(callback, views.card(o, user_id, nav))
             elif nav.a == "ben":
                 await show(callback, views.olympiad_benefits(o, nav))
-            elif nav.a == "benu":
-                screen = views.olympiad_university(o, nav)
+            elif nav.a in ("benu", "fit", "fitp", "fitw", "fitr"):
+                screen = views.olympiad_university(o, nav) if nav.a == "benu" else views.diploma_fit(o, nav)
                 if screen is None:
                     await stale_button(callback)
                     return

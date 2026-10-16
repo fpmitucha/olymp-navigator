@@ -437,3 +437,52 @@ def load_benefits(folder: Path, catalog: Catalog) -> BenefitsCatalog:
     if errors:
         raise BenefitsError("\n".join(errors))
     return BenefitsCatalog(universities)
+
+
+# ---------------------------------------------------------------------------
+# Подбор по диплому
+# ---------------------------------------------------------------------------
+
+DIPLOMA_CHOICES = {1: "winner", 2: "prize"}
+
+
+def profile_level(olympiad: CatalogOlympiad, profile: str, academic_year: str) -> tuple[int | None, str | None]:
+    """Уровень профиля в перечне года; если там профиля нет — в самом свежем из более ранних."""
+    by_year = olympiad.profiles.get(profile, {})
+    if academic_year in by_year:
+        return by_year[academic_year].level, academic_year
+    earlier = sorted((y for y in by_year if y <= academic_year), reverse=True)
+    return (by_year[earlier[0]].level, earlier[0]) if earlier else (None, None)
+
+
+def rule_fits(rule: Rule, profile: str, diploma: str, grade: int | None, level: int | None) -> bool:
+    """Подходит ли правило диплому: профиль, победитель/призёр, класс и уровень олимпиады."""
+    if rule.profiles and profile not in rule.profiles:
+        return False
+    if rule.diploma != "any" and rule.diploma != diploma:
+        return False
+    if grade and rule.grades and grade not in rule.grades:
+        return False
+    if level and rule.levels and level not in rule.levels:
+        return False
+    return True
+
+
+def fitting(catalog: BenefitsCatalog, olympiad_id: str, profile: str, diploma: str, grade: int | None,
+            level: int | None) -> list[tuple[UniversityBenefits, list[Rule]]]:
+    result = []
+    for u, rules in catalog.for_olympiad(olympiad_id):
+        fit = [r for r in rules if rule_fits(r, profile, diploma, grade, level)]
+        if fit:
+            result.append((u, fit))
+    return result
+
+
+def olympiad_profiles(catalog: BenefitsCatalog, olympiad_id: str) -> list[str]:
+    """Профили олимпиады, по которым хоть один вуз даёт льготы (для кнопок подбора)."""
+    found: set[str] = set()
+    for _, rules in catalog.for_olympiad(olympiad_id):
+        for r in rules:
+            # правило без профиля — любой профиль олимпиады
+            found.update(r.profiles if r.profiles else r.olympiad.profiles)
+    return sorted(found)

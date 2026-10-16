@@ -175,3 +175,19 @@ class NotInListTest(unittest.TestCase):
         self.assertIn("Олимпиады нет в перечне 2026/27", not_in_list_banner(gone, [rule], 2027)[0])
         self.assertIn("Профилей физика нет", not_in_list_banner(stays, [rule], 2027)[0])
         self.assertEqual(not_in_list_banner(stays, [SimpleNamespace(profiles=["математика"])], 2027), [])
+
+
+class FitTest(unittest.TestCase):
+    def test_rule_fits(self):
+        from types import SimpleNamespace
+
+        from app.benefits import rule_fits
+
+        r = SimpleNamespace(profiles=["математика"], diploma="winner", grades=[11], levels=[1])
+        self.assertTrue(rule_fits(r, "математика", "winner", 11, 1))
+        self.assertFalse(rule_fits(r, "физика", "winner", 11, 1))
+        self.assertFalse(rule_fits(r, "математика", "prize", 11, 1))
+        self.assertFalse(rule_fits(r, "математика", "winner", 10, 1))
+        self.assertFalse(rule_fits(r, "математика", "winner", 11, 2))
+        any_rule = SimpleNamespace(profiles=None, diploma="any", grades=None, levels=None)
+        self.assertTrue(rule_fits(any_rule, "химия", "prize", 9, 3))

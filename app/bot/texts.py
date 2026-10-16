@@ -350,7 +350,7 @@ def _host(url: str) -> str:
     return re.sub(r"^https?://(www\.)?", "", url).strip("/").split("/")[0] or url
 
 
-def _fit(lines: list[str]) -> str:
+def _fit(lines: list[str], more: str = "Полный список — на сайте олимпиады.") -> str:
     """Укладывает текст в лимит Telegram, обрезая с конца списка профилей."""
     text = "\n".join(lines)
     if len(text) <= MAX_MESSAGE:
@@ -361,7 +361,7 @@ def _fit(lines: list[str]) -> str:
             break
         kept.append(line)
     hidden = len(lines) - len(kept)
-    return "\n".join(kept + ["", f"<i>…и ещё {hidden} строк. Полный список — на сайте олимпиады.</i>"])
+    return "\n".join(kept + ["", f"<i>…и ещё {hidden} строк. {more}</i>"])
 
 
 # ---------------------------------------------------------------------------
@@ -659,3 +659,82 @@ def university_benefits(u: UniversityBenefits, admission_year: int) -> str:
     lines.append(f'Источник: <a href="{escape(u.source_url, quote=True)}">{escape(u.source_title or u.source_url)}</a>, '
                  f"проверено {ru_date(u.checked_at)} {u.checked_at.year}")
     return _fit(lines)
+
+
+# ---------------------------------------------------------------------------
+# Подбор по диплому
+# ---------------------------------------------------------------------------
+
+DIPLOMA_TITLES = {"winner": "победитель", "prize": "призёр"}
+
+
+def fit_question(o: CatalogOlympiad, step: str, profile: str | None = None, diploma: str | None = None) -> str:
+    name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
+    chosen = [escape(x) for x in (profile, DIPLOMA_TITLES.get(diploma or "")) if x]
+    head = f"🎯 <b>Подбор по диплому: «{name}»</b>"
+    if chosen:
+        head += "\n<i>" + " · ".join(chosen) + "</i>"
+    questions = {
+        "profile": "По какому профилю диплом?",
+        "diploma": "Ты победитель или призёр?",
+        "grade": "За какой класс диплом?",
+    }
+    return f"{head}\n\n{questions[step]}"
+
+
+def _programs_short(programs: set[str], limit: int = 2, width: int = 55) -> str:
+    items = sorted(programs)
+    text = "; ".join(x if len(x) <= width else x[:width - 1] + "…" for x in items[:limit])
+    if len(items) > limit:
+        text += f" и ещё {len(items) - limit}"
+    return text
+
+
+def fit_result(o: CatalogOlympiad, profile: str, diploma: str, grade: int | None, level: int | None,
+               level_year: str | None, entries: list[tuple[UniversityBenefits, list[Rule]]],
+               admission_year: int) -> str:
+    """Куда можно с этим дипломом: по вузу — БВИ / 100 баллов, программы и условия."""
+    name = escape("ВсОШ" if o.is_vsosh else short_name(o.name, 60))
+    who = f"{DIPLOMA_TITLES[diploma]}, {grade} класс" if grade else DIPLOMA_TITLES[diploma]
+    lines = [f"🎯 <b>«{name}», {escape(profile)}</b>", f"<i>{who}"
+             + (f" · уровень {level} в перечне {level_year}" if level and not o.is_vsosh else "") + "</i>", ""]
+    if not entries:
+        lines.append("Ни один из собранных вузов не даёт льгот по такому диплому. "
+                     "Проверь класс и профиль или загляни в общий список льгот олимпиады.")
+        return "\n".join(lines)
+    lines += not_in_list_banner(o, [r for _, rules in entries for r in rules], admission_year)
+    if diploma == "prize" and prize_bvi_affected([r for _, rules in entries for r in rules if r.benefit == "bvi"]):
+        lines += [PRIZE_BVI_WARNING, ""]
+    bvi_count = sum(any(r.benefit == "bvi" for r in rules) for _, rules in entries)
+    lines.append(f"Вузов с льготами: <b>{len(entries)}</b>, из них с БВИ — <b>{bvi_count}</b>.")
+    lines.append("")
+    order = sorted(entries, key=lambda e: (not any(r.benefit == "bvi" for r in e[1]), e[0].university))
+    for u, rules in order:
+        lines.append(f"<b>{escape(u.university)}</b> — <i>{u.status_label(admission_year)}</i>")
+        by_benefit: dict[str, list[Rule]] = {}
+        for r in rules:
+            by_benefit.setdefault(r.benefit, []).append(r)
+        for benefit in sorted(by_benefit, key=_benefit_order):
+            group = by_benefit[benefit]
+            programs = {p for r in group for p in r.programs or []}
+            any_program = any(r.programs is None for r in group)
+            where = ("направления по профилю олимпиады" if any_program and not programs
+                     else _plural(len(programs), "программа", "программы", "программ") + ": "
+                     + _programs_short(programs))
+            lines.append(f"{BENEFIT_ICONS[benefit]} {BENEFIT_TYPES[benefit]} — {escape(where)}")
+            scores = sorted({r.confirm_min_score for r in group if r.confirm_min_score})
+            subjects = sorted({r.confirm_subject for r in group if r.confirm_subject})
+            score_for = sorted({r.score_for for r in group if r.score_for})
+            cond = []
+            if scores:
+                cond.append(f"ЕГЭ от {scores[0]}" + (f"–{scores[-1]}" if len(scores) > 1 else "")
+                            + (f": {', '.join(subjects)}" if subjects else ": предмет профиля"))
+            elif o.is_vsosh:
+                cond.append("без условия по ЕГЭ")
+            if score_for:
+                cond.append("100 баллов: " + "; ".join(score_for))
+            if cond:
+                lines.append(f"      <i>{escape(' · '.join(cond))}</i>")
+        lines.append("")
+    lines.append("<i>Программы целиком — кнопкой вуза ниже. Всегда сверяй с правилами приёма вуза.</i>")
+    return _fit(lines, more="Остальные вузы — кнопками ниже.")

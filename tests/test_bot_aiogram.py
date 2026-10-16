@@ -314,6 +314,28 @@ class BotFlowTest(unittest.TestCase):
         stale = self.feed(self.callback(self.nav(a="uni", q=99)))
         self.assertTrue(next(c for c in stale if isinstance(c, AnswerCallbackQuery)).show_alert)
 
+    def test_diploma_fit(self):
+        card = self.sent(self.feed(self.message("Физтех")))[0]
+        benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
+        step = self.only_edit(self.feed(self.callback(self.button(benefits, "🎯 Подобрать"))))
+        if "По какому профилю" in step.text:
+            step = self.only_edit(self.feed(self.callback(self.button(step, "математика"))))
+        self.assertIn("Ты победитель или призёр?", step.text)
+        winner = self.only_edit(self.feed(self.callback(self.button(step, "🥇 Победитель"))))
+        self.assertIn("За какой класс", winner.text)
+        result = self.only_edit(self.feed(self.callback(self.button(winner, "11 класс"))))
+        self.assertIn("<b>Тестовый вуз</b>", result.text)
+        self.assertIn("🏅 БВИ", result.text)
+        self.assertIn("📄 Тестовый вуз", [label for label, _ in self.buttons(result)])
+        tenth = self.only_edit(self.feed(self.callback(self.button(winner, "10 класс"))))
+        self.assertIn("Ни один из собранных вузов", tenth.text)  # в тестовом вузе — только за 11 класс
+        prize = self.only_edit(self.feed(self.callback(self.button(step, "🥈 Призёр"))))
+        prize11 = self.only_edit(self.feed(self.callback(self.button(prize, "11 класс"))))
+        self.assertIn("💯 100 баллов ЕГЭ", prize11.text)
+        self.assertNotIn("🏅 БВИ", prize11.text)
+        back = self.only_edit(self.feed(self.callback(self.button(prize11, "🎓 К льготам"))))
+        self.assertEqual(back.text, benefits.text)
+
     def test_make_bot_connection_options(self):
         import socket
 
