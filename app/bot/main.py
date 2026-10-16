@@ -663,7 +663,7 @@ async def save_bot_avatar(bot: Bot, bot_id: int, folder: Path) -> Path | None:
     try:
         photos = await bot.get_user_profile_photos(bot_id, limit=1)
         if not photos.photos:
-            log.info("У бота нет аватарки — PDF будут без водяного знака")
+            log.info("У бота в Telegram нет аватарки — в PDF водяной знак из app/assets/logo.png")
             return None
         file = await bot.get_file(photos.photos[0][-1].file_id)
         target = folder / "avatar.jpg"
