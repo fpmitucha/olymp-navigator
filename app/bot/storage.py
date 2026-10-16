@@ -9,7 +9,7 @@ SQLite выбран для старта: не нужен отдельный се
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.stages import Stage, StageRow
@@ -51,6 +51,35 @@ CREATE TABLE IF NOT EXISTS university_subscription (  -- «сообщить, к�
     created_at   TEXT NOT NULL,
     PRIMARY KEY (telegram_id, university)
 );
+-- личный кабинет на сайте: вход через бота, профиль и дипломы
+CREATE TABLE IF NOT EXISTS web_login (
+    token        TEXT PRIMARY KEY,
+    telegram_id  INTEGER,
+    created_at   TEXT NOT NULL,
+    confirmed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS web_session (
+    sid          TEXT PRIMARY KEY,
+    telegram_id  INTEGER NOT NULL REFERENCES bot_user(telegram_id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_profile (
+    telegram_id  INTEGER PRIMARY KEY REFERENCES bot_user(telegram_id) ON DELETE CASCADE,
+    name         TEXT NOT NULL DEFAULT '',
+    grade        INTEGER,
+    updated_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_diploma (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id   INTEGER NOT NULL REFERENCES bot_user(telegram_id) ON DELETE CASCADE,
+    olympiad_id   TEXT NOT NULL,
+    profile       TEXT NOT NULL,
+    diploma       TEXT NOT NULL,          -- winner | prize
+    grade         INTEGER NOT NULL,
+    academic_year TEXT NOT NULL,          -- год перечня, когда получен диплом: 2025/26
+    created_at    TEXT NOT NULL,
+    UNIQUE (telegram_id, olympiad_id, profile, academic_year)
+);
 CREATE TABLE IF NOT EXISTS meta (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
@@ -74,6 +103,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _ago(*, minutes: int = 0, days: int = 0) -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes, days=days)).isoformat(timespec="seconds")
+
+
 def _date(value: str | None) -> date | None:
     return date.fromisoformat(value) if value else None
 
@@ -86,6 +119,8 @@ class Storage:
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # бот и сайт пишут в одну базу: подождать до 5 секунд, а не падать с «database is locked»
+        self.conn.execute("PRAGMA busy_timeout = 5000")
         if self.path != ":memory:":
             self.conn.execute("PRAGMA journal_mode = WAL")
         self._migrate_stage_table()
@@ -248,6 +283,91 @@ class Storage:
             "SELECT s.telegram_id FROM university_subscription s JOIN bot_user u USING (telegram_id) "
             "WHERE s.university = ? AND u.is_active = 1 ORDER BY s.telegram_id", (university,))
         return [r[0] for r in rows]
+
+    # -- сайт: вход через бота ---------------------------------------------
+
+    def create_login(self, token: str) -> None:
+        self.conn.execute("INSERT INTO web_login (token, created_at) VALUES (?, ?)", (token, _now()))
+        self.conn.commit()
+
+    def confirm_login(self, token: str, telegram_id: int, max_age_minutes: int = 15) -> bool:
+        """Бот получил /start login_<token>: привязываем вход к пользователю (токен живёт 15 минут)."""
+        self.touch_user(telegram_id)
+        cur = self.conn.execute(
+            "UPDATE web_login SET telegram_id = ?, confirmed_at = ? WHERE token = ? AND telegram_id IS NULL "
+            "AND created_at >= ?", (telegram_id, _now(), token, _ago(minutes=max_age_minutes)))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def take_login(self, token: str) -> int | None:
+        """Сайт забирает подтверждённый вход — один раз."""
+        row = self.conn.execute(
+            "SELECT telegram_id FROM web_login WHERE token = ? AND telegram_id IS NOT NULL", (token,)).fetchone()
+        if row is None:
+            return None
+        self.conn.execute("DELETE FROM web_login WHERE token = ?", (token,))
+        self.conn.execute("DELETE FROM web_login WHERE created_at < ?", (_ago(minutes=60),))
+        self.conn.commit()
+        return row[0]
+
+    def create_session(self, sid: str, telegram_id: int) -> None:
+        self.conn.execute("INSERT INTO web_session (sid, telegram_id, created_at) VALUES (?, ?, ?)",
+                          (sid, telegram_id, _now()))
+        self.conn.commit()
+
+    def session_user(self, sid: str, max_age_days: int = 60) -> int | None:
+        row = self.conn.execute("SELECT telegram_id FROM web_session WHERE sid = ? AND created_at >= ?",
+                                (sid, _ago(days=max_age_days))).fetchone()
+        return row[0] if row else None
+
+    def delete_session(self, sid: str) -> None:
+        self.conn.execute("DELETE FROM web_session WHERE sid = ?", (sid,))
+        self.conn.commit()
+
+    # -- профиль и дипломы ---------------------------------------------------
+
+    def profile(self, telegram_id: int) -> dict:
+        row = self.conn.execute("SELECT name, grade FROM user_profile WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        return {"name": row["name"], "grade": row["grade"]} if row else {"name": "", "grade": None}
+
+    def save_profile(self, telegram_id: int, name: str, grade: int | None) -> None:
+        self.touch_user(telegram_id)
+        self.conn.execute(
+            "INSERT INTO user_profile (telegram_id, name, grade, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (telegram_id) DO UPDATE SET name = excluded.name, grade = excluded.grade, "
+            "updated_at = excluded.updated_at", (telegram_id, name, grade, _now()))
+        self.conn.commit()
+
+    def add_diploma(self, telegram_id: int, olympiad_id: str, profile: str, diploma: str, grade: int,
+                    academic_year: str) -> None:
+        self.touch_user(telegram_id)
+        self.conn.execute(
+            "INSERT INTO user_diploma (telegram_id, olympiad_id, profile, diploma, grade, academic_year, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (telegram_id, olympiad_id, profile, academic_year) "
+            "DO UPDATE SET diploma = excluded.diploma, grade = excluded.grade",
+            (telegram_id, olympiad_id, profile, diploma, grade, academic_year, _now()))
+        self.conn.commit()
+
+    def diplomas(self, telegram_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, olympiad_id, profile, diploma, grade, academic_year FROM user_diploma "
+            "WHERE telegram_id = ? ORDER BY academic_year DESC, id", (telegram_id,))
+        return [dict(r) for r in rows]
+
+    def delete_diploma(self, telegram_id: int, diploma_id: int) -> None:
+        self.conn.execute("DELETE FROM user_diploma WHERE id = ? AND telegram_id = ?", (diploma_id, telegram_id))
+        self.conn.commit()
+
+    def university_subscriptions(self, telegram_id: int) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT university FROM university_subscription WHERE telegram_id = ? ORDER BY created_at", (telegram_id,))
+        return [r[0] for r in rows]
+
+    def delete_user_data(self, telegram_id: int) -> None:
+        """«Удалить мои данные» в кабинете: профиль, дипломы, подписки, сессии."""
+        for table in ("user_diploma", "user_profile", "web_session", "subscription", "university_subscription"):
+            self.conn.execute(f"DELETE FROM {table} WHERE telegram_id = ?", (telegram_id,))  # noqa: S608
+        self.conn.commit()
 
     def get_meta(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()

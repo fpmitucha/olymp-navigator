@@ -1,15 +1,19 @@
 {% extends "base.html" %}
-{% from "_macros.html" import groups, status, closing with context %}
+{% from "_macros.html" import groups, status, closing, follow with context %}
 {% block title %}{{ u.university }}: олимпиады для БВИ и 100 баллов · Бвишечка{% endblock %}
 {% block main %}
 <div class="wrap">
   <div class="page-head">
+    <p class="crumbs"><a href="/universities">Вузы</a></p>
     <h1>{{ u.university }}</h1>
     <p class="muted">{{ u.full_name }} · {{ status(u, admission_year) }}</p>
+    <div class="head-actions">
+      {{ follow('/me/universities/' ~ u_slug, following, '✓ Это моя цель', '★ Добавить в цели') }}
+      <a class="btn small ghost" href="{{ u.source_url }}" rel="nofollow noopener">Документ вуза</a>
+    </div>
   </div>
-  {% if u.admission_year < admission_year %}<p class="note">Вуз ещё не опубликовал особые права на приём {{ admission_year }} — ниже данные прошлого года. В боте можно подписаться на обновление.</p>{% endif %}
+  {% if u.admission_year < admission_year %}<p class="note">Вуз ещё не опубликовал особые права на приём {{ admission_year }} — ниже данные прошлого года. Добавь вуз в цели: напишем в боте, когда выйдут новые.</p>{% endif %}
   {% if u.notes %}<ul class="muted">{% for n in u.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
-  <p class="muted small">Источник: <a href="{{ u.source_url }}" rel="nofollow">{{ u.source_title or u.source_url }}</a>, проверено {{ u.checked_at.strftime('%d.%m.%Y') }}.</p>
   <h2 style="margin-top:32px">Олимпиады — {{ items|length }}</h2>
   {% for o, gs in items %}
   <div class="uni">
@@ -17,7 +21,7 @@
     {{ groups(gs) }}
   </div>
   {% endfor %}
-  <div style="height:40px"></div>
+  <p class="muted small" style="margin:20px 0 40px">Источник: <a href="{{ u.source_url }}" rel="nofollow noopener">{{ u.source_title or u.source_url }}</a>, проверено {{ u.checked_at.strftime('%d.%m.%Y') }}.</p>
   {{ closing() }}
 </div>
 {% endblock %}

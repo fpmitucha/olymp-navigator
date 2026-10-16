@@ -775,3 +775,8 @@ def benefits_changed(u: UniversityBenefits, old_label: str, changes: list, focus
     lines.append(f'Подробнее — в боте: 🎓 Вузы → {escape(u.university)}. '
                  f'<a href="{escape(u.source_url, quote=True)}">Документ вуза</a>')
     return _fit(lines, more="Полный список — в боте.")
+
+
+REPORT_ERROR_HINT = ("📮 <b>Нашли ошибку?</b>\n\nНапиши одним сообщением, начав со слова «Ошибка»: какая олимпиада, "
+                     "какой вуз и что указано неверно. Если есть ссылка на документ вуза — добавь её.\n\n"
+                     "<i>Например: Ошибка. Высшая проба, ВШЭ: на «Экономику» БВИ дают и призёрам.</i>")

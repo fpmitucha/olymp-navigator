@@ -607,7 +607,8 @@ def cmd_web_run(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
     catalog = _catalog()
-    app = create_app(catalog, _benefits(catalog, strict=False), stages_db=settings.bot_db_path)
+    app = create_app(catalog, _benefits(catalog, strict=False), storage_path=settings.bot_db_path,
+                     secret=settings.web_secret)
     print(f"Сайт: http://{args.host}:{args.port}  (остановка — Ctrl+C)")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0

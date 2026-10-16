@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge, status, closing with context %}
+{% from "_macros.html" import badge, status, closing, follow with context %}
 {% block title %}{{ name }} — льготы в {{ u.university }} · Бвишечка{% endblock %}
 {% block description %}Какие льготы даёт «{{ o.name }}» при поступлении в {{ u.full_name }}: БВИ, 100 баллов, программы и условия по ЕГЭ.{% endblock %}
 {% block main %}
 <div class="wrap">
   <div class="page-head">
-    <p class="small"><a href="/olympiad/{{ o.id }}">{{ name }}</a> → <a href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a></p>
+    <p class="crumbs"><a href="/olympiad/{{ o.id }}">{{ name }}</a> → <a href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a></p>
     <h1>{{ name }} в {{ u.university }}</h1>
     <p class="muted">{{ u.full_name }} · {{ status(u, admission_year) }}</p>
   </div>
@@ -26,7 +26,7 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="muted small" style="margin:16px 0 40px">Источник: <a href="{{ u.source_url }}" rel="nofollow">{{ u.source_title or u.source_url }}</a>, проверено {{ u.checked_at.strftime('%d.%m.%Y') }}.</p>
+  <p class="muted small" style="margin:16px 0 40px">Источник: <a href="{{ u.source_url }}" rel="nofollow noopener">{{ u.source_title or u.source_url }}</a>, проверено {{ u.checked_at.strftime('%d.%m.%Y') }}.</p>
   {{ closing() }}
 </div>
 {% endblock %}

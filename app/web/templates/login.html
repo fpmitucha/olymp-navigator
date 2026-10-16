@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Вход · Бвишечка{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="login">
+    <h1>Вход через Telegram</h1>
+    <p class="muted">Без паролей: бот подтвердит, что это ты. Мы храним только Telegram id и то, что ты сам добавишь в кабинет.</p>
+    <ol>
+      <li>Нажми кнопку — откроется наш бот.</li>
+      <li>Нажми в боте «Запустить» (или «Start»).</li>
+      <li>Вернись на эту вкладку — вход выполнится сам.</li>
+    </ol>
+    <p style="margin-top:22px"><a class="btn gold" href="{{ link }}" target="_blank" rel="noopener">Открыть бот и войти</a></p>
+    <p class="wait" id="wait" role="status"><i aria-hidden="true"></i>Ждём подтверждения в боте…</p>
+    <p class="muted small">Ссылка действует 15 минут. Не получилось — обнови страницу.</p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // спрашиваем сайт, подтвердил ли бот вход; как только да — завершаем вход
+  (function poll() {
+    fetch("/login/check?token={{ token }}").then(r => r.json()).then(data => {
+      if (data.ok) { location.href = "/login/finish?token={{ token }}"; }
+      else { setTimeout(poll, 2000); }
+    }).catch(() => setTimeout(poll, 4000));
+  })();
+</script>
+{% endblock %}

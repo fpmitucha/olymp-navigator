@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status with context %}
+{% from "_macros.html" import status, plural with context %}
 {% block title %}Вузы: льготы для олимпиадников · Бвишечка{% endblock %}
 {% block main %}
 <div class="wrap">
@@ -12,7 +12,7 @@
     <li>
       <a class="title" href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a>
       <span class="meta">{{ u.full_name }} · {{ status(u, admission_year) }}</span>
-      <span class="side">{{ olympiads }} олимпиад<br>{% if counts.bvi %}БВИ: {{ counts.bvi }} правил{% else %}без БВИ{% endif %}</span>
+      <span class="side">{{ plural(olympiads, 'олимпиада', 'олимпиады', 'олимпиад') }}<br>{% if counts.bvi %}есть БВИ{% else %}только 100 баллов{% endif %}</span>
     </li>
     {% endfor %}
   </ul>

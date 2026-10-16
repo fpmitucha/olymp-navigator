@@ -14,13 +14,17 @@
 <body>
 <header class="site-head">
   <div class="wrap">
-    <a class="brand" href="/"><img src="/assets/logo-mark.png" alt="">Бвишечка</a>
+    <a class="brand" href="/"><img src="/assets/logo-mark.png" alt=""><span>Бвишечка</span></a>
     {% set path = request.url.path %}
     <nav class="site-nav">
       <a href="/olympiads" {% if path.startswith('/olympiad') %}aria-current="page"{% endif %}>Олимпиады</a>
       <a href="/universities" {% if path.startswith('/universit') %}aria-current="page"{% endif %}>Вузы</a>
     </nav>
-    <a class="bot-link" href="{{ bot_url }}">Бот в Telegram</a>
+    {% if user %}
+    <a class="me-link" href="/me"><span class="dot" aria-hidden="true">★</span><span>{{ user_name or 'Мой путь' }}</span></a>
+    {% else %}
+    <a class="me-link" href="/login"><span class="dot" aria-hidden="true">★</span><span>Войти</span></a>
+    {% endif %}
   </div>
 </header>
 <main>{% block main %}{% endblock %}</main>
@@ -30,5 +34,6 @@
     <span>Нашли ошибку? <a href="{{ bot_url }}?start=error">Напишите в бот</a></span>
   </div>
 </footer>
+{% block scripts %}{% endblock %}
 </body>
 </html>

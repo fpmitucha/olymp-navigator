@@ -1,13 +1,17 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge, groups, status, closing, plural with context %}
+{% from "_macros.html" import badge, groups, status, closing, plural, follow, days_left with context %}
 {% block title %}{{ name }}: льготы в вузах, БВИ и 100 баллов · Бвишечка{% endblock %}
 {% block description %}{{ o.name }}: в каких вузах даёт БВИ или 100 баллов, на какие программы и с каким ЕГЭ.{% endblock %}
 {% block main %}
 <div class="wrap">
   <div class="page-head">
+    <p class="crumbs"><a href="/olympiads">Олимпиады</a></p>
     <h1>{{ o.name if not o.is_vsosh else 'Всероссийская олимпиада школьников' }}</h1>
-    <p class="muted">{% if o.is_vsosh %}Заключительный этап ВсОШ даёт БВИ по закону — без условия по ЕГЭ.{% else %}Льготы в {{ plural(entries|length, 'вузе', 'вузах', 'вузах') }} из собранных.{% endif %}
-      {% if o.websites %}<a href="{{ o.websites[0] }}" rel="nofollow">Сайт олимпиады</a>{% endif %}</p>
+    <p class="muted">{% if o.is_vsosh %}Заключительный этап ВсОШ даёт БВИ по закону — без условия по ЕГЭ.{% else %}Льготы в {{ plural(entries|length, 'вузе', 'вузах', 'вузах') }} из {{ university_count }} собранных.{% endif %}</p>
+    <div class="head-actions">
+      {{ follow('/me/olympiads/' ~ o.id, following, '✓ Слежу за этапами', '★ Следить за этапами') }}
+      {% if o.websites %}<a class="btn small ghost" href="{{ o.websites[0] }}" rel="nofollow noopener">Сайт олимпиады</a>{% endif %}
+    </div>
   </div>
   <div class="layout">
     <div>
@@ -15,9 +19,10 @@
       {% if prize_warning %}<p class="note">{{ prize_warning }}</p>{% endif %}
 
       {% if profiles %}
-      <div class="fit" id="fit">
+      <div class="panel fit" id="fit">
+        <p class="kicker">Подбор по диплому</p>
         <h2>Куда с моим дипломом</h2>
-        <p class="muted small">Оставим только вузы, где диплом сработает, — с программами и порогом ЕГЭ.</p>
+        <p class="small">Уровень олимпиады берём из перечня того года, когда получен диплом.</p>
         <form action="/olympiad/{{ o.id }}#fit" method="get">
           <label>Профиль
             <select name="profile" required>
@@ -25,30 +30,46 @@
               {% for p in profiles %}<option {% if p == form.profile %}selected{% endif %}>{{ p }}</option>{% endfor %}
             </select></label>
           <label>Диплом
-            <select name="diploma" required>
+            <select name="diploma">
               <option value="winner" {% if form.diploma == 'winner' %}selected{% endif %}>победитель</option>
               <option value="prize" {% if form.diploma == 'prize' %}selected{% endif %}>призёр</option>
             </select></label>
           <label>Класс
             <select name="grade">
-              {% for g in ([9, 10, 11] if o.is_vsosh else [10, 11]) %}<option value="{{ g }}" {% if form.grade == g or (not form.grade and g == 11) %}selected{% endif %}>{{ g }} класс</option>{% endfor %}
+              {% for g in ([9, 10, 11] if o.is_vsosh else [10, 11]) %}<option value="{{ g }}" {% if form.grade == g or (not form.grade and g == 11) %}selected{% endif %}>{{ g }}</option>{% endfor %}
             </select></label>
-          <button class="btn" type="submit">Подобрать</button>
+          <label>Год диплома
+            <select name="year">
+              {% for y in diploma_years %}<option value="{{ y }}" {% if y == form.year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+            </select></label>
+          <button class="btn gold" type="submit">Подобрать</button>
         </form>
 
         {% if fit %}
-        <div style="margin-top:22px">
-          <p><b>{{ fit.profile }}</b>, {{ 'победитель' if fit.diploma == 'winner' else 'призёр' }}{% if fit.grade %}, {{ fit.grade }} класс{% endif %}{% if fit.level and not o.is_vsosh %} <span class="muted">· уровень {{ fit.level }} в перечне {{ fit.level_year }}</span>{% endif %}</p>
+        <div class="fit-results">
+          <p class="fit-summary" style="padding:16px 0 4px">{{ fit.profile }}, {{ 'победитель' if fit.diploma == 'winner' else 'призёр' }}{% if fit.grade %}, {{ fit.grade }} класс{% endif %}{% if fit.level and not o.is_vsosh %}, уровень {{ fit.level }} в перечне {{ fit.level_year }}{% endif %}:
+            {% if fit.entries %}льготы в <b>{{ fit.entries|length }}</b> вузах, из них БВИ — в <b>{{ fit.bvi }}</b>.{% else %}ни один из собранных вузов не даёт льгот по такому диплому.{% endif %}</p>
+          {% for u, gs, best in fit.entries %}
+          <div class="fit-row">
+            <h3><a href="/olympiad/{{ o.id }}/{{ uni_slug[u.university] }}">{{ u.university }}</a> {{ status(u, admission_year) }}</h3>
+            <div>{{ badge(best) }}</div>
+            {{ groups(gs) }}
+          </div>
+          {% endfor %}
           {% if fit.entries %}
-            {% for u, gs, rules in fit.entries %}
-            <div class="uni">
-              <div class="uni-head"><h3><a href="/olympiad/{{ o.id }}/{{ uni_slug[u.university] }}">{{ u.university }}</a></h3>{{ status(u, admission_year) }}</div>
-              {{ groups(gs) }}
-            </div>
-            {% endfor %}
-            <p style="margin-top:16px"><a class="btn ghost" href="/olympiad/{{ o.id }}/pdf?profile={{ fit.profile|urlencode }}&diploma={{ fit.diploma }}&grade={{ fit.grade or '' }}">Скачать PDF</a></p>
-          {% else %}
-            <p class="muted">Ни один из собранных вузов не даёт льгот по такому диплому. Проверь профиль и класс.</p>
+          <div class="head-actions">
+            <a class="btn ghost" style="color:#fff;box-shadow:inset 0 0 0 1.5px #fff" href="/olympiad/{{ o.id }}/pdf?profile={{ fit.profile|urlencode }}&diploma={{ fit.diploma }}&grade={{ fit.grade or '' }}&year={{ fit.year }}">Скачать PDF</a>
+            {% if user %}
+            <form method="post" action="/me/diplomas" class="inline">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="olympiad_id" value="{{ o.id }}">
+              <input type="hidden" name="profile" value="{{ fit.profile }}"><input type="hidden" name="diploma" value="{{ fit.diploma }}">
+              <input type="hidden" name="grade" value="{{ fit.grade or 11 }}"><input type="hidden" name="year" value="{{ fit.year }}">
+              <button class="btn gold" type="submit">★ Сохранить диплом в мой путь</button>
+            </form>
+            {% else %}
+            <a class="btn gold" href="/login">★ Войти и сохранить диплом</a>
+            {% endif %}
+          </div>
           {% endif %}
         </div>
         {% endif %}
@@ -58,9 +79,7 @@
       <h2>Льготы в вузах</h2>
       {% for u, gs in entries %}
       <div class="uni">
-        <div class="uni-head">
-          <h3><a href="/olympiad/{{ o.id }}/{{ uni_slug[u.university] }}">{{ u.university }}</a></h3>{{ status(u, admission_year) }}
-        </div>
+        <div class="uni-head"><h3><a href="/olympiad/{{ o.id }}/{{ uni_slug[u.university] }}">{{ u.university }}</a></h3>{{ status(u, admission_year) }}</div>
         {{ groups(gs) }}
       </div>
       {% else %}
@@ -70,19 +89,24 @@
 
     <aside>
       <div class="aside-box">
-        <h3>Ближайшие этапы</h3>
-        {% for s in stages %}
-        <div class="stage"><b>{{ s.starts_at.strftime('%d.%m.%Y') if s.starts_at else 'дата уточняется' }}{% if s.ends_at and s.ends_at != s.starts_at %} – {{ s.ends_at.strftime('%d.%m') }}{% endif %}</b>{{ s.title }}{% if s.profile %} <span class="muted">({{ s.profile }})</span>{% endif %}</div>
-        {% else %}
-        <p class="muted small">Дат пока нет. Подпишись в боте — пришлём, когда появятся.</p>
-        {% endfor %}
-        <p style="margin:14px 0 0"><a class="btn ghost" href="{{ bot_url }}">Напоминать в Telegram</a></p>
+        <h3>Маршрут сезона</h3>
+        <ol class="route">
+          {% for s in stages %}
+          <li class="{{ 'soon' if s.starts_at and (s.starts_at - today).days <= 14 }}">
+            <span class="when">{% if s.starts_at %}{{ s.starts_at.strftime('%d.%m') }}{% if s.ends_at and s.ends_at != s.starts_at %}–{{ s.ends_at.strftime('%d.%m') }}{% endif %} · {{ days_left(s.starts_at, today) }}{% else %}дата уточняется{% endif %}</span>
+            <b>{{ s.kind_label }}</b>{{ s.title }}{% if s.profile %} <span class="muted">({{ s.profile }})</span>{% endif %}
+          </li>
+          {% else %}
+          <li><b>Дат пока нет</b><span class="muted">Следи за олимпиадой — бот напишет, как только они появятся.</span></li>
+          {% endfor %}
+          <li class="goal"><b>Поступление</b><span class="muted">лето {{ admission_year }}</span></li>
+        </ol>
       </div>
       {% if year_rows and not o.is_vsosh %}
       <div class="aside-box">
         <h3>Уровни по годам</h3>
         <div class="scroll"><table class="years">
-          <tr><th>Профиль</th>{% for y in years|reverse %}<th>{{ y[2:4] }}/{{ y[-2:] }}</th>{% endfor %}</tr>
+          <tr><th>Профиль</th>{% for y in years|reverse %}<th>{{ y[2:4] }}–{{ y[-2:] }}</th>{% endfor %}</tr>
           {% for name, levels in year_rows %}
           <tr><td>{{ name }}</td>{% for lv in levels|reverse %}<td class="{{ 'none' if not lv }}">{{ lv or '—' }}</td>{% endfor %}</tr>
           {% endfor %}

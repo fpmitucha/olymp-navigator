@@ -363,6 +363,18 @@ class BotFlowTest(unittest.TestCase):
         self.assertTrue(docs[0].document.filename.endswith(".pdf"))
         self.assertIn("Льготы", docs[0].caption)
 
+    def test_login_deep_link(self):
+        self.storage.create_login("tok123")
+        reply = self.sent(self.feed(self.message("/start login_tok123")))[0]
+        self.assertIn("вернись на сайт", reply.text)
+        self.assertEqual(self.storage.take_login("tok123"), USER_ID)
+        stale = self.sent(self.feed(self.message("/start login_nope")))[0]
+        self.assertIn("устарела", stale.text)
+        hint = self.sent(self.feed(self.message("/start error")))[0]
+        self.assertIn("Ошибка", hint.text)
+        thanks = self.sent(self.feed(self.message("Ошибка. Физтех: неверный порог")))[0]
+        self.assertIn("Спасибо", thanks.text)
+
     def test_make_bot_connection_options(self):
         import socket
 

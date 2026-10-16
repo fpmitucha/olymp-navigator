@@ -444,8 +444,31 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
     @router.message(CommandStart())
     async def start(message: Message) -> None:
         storage.touch_user(message.chat.id)
+        payload = (message.text or "").partition(" ")[2].strip()
+        if payload.startswith("login_"):
+            # вход на сайт: сайт показал ссылку t.me/<бот>?start=login_<токен>
+            if storage.confirm_login(payload.removeprefix("login_"), message.chat.id):
+                await message.answer("✅ Готово — вернись на сайт, вход выполнится сам.\n\n"
+                                     "<i>Если вкладку закрыли, нажми «Войти» на сайте ещё раз.</i>")
+            else:
+                await message.answer("Ссылка для входа устарела. Нажми «Войти» на сайте ещё раз.")
+            return
+        if payload == "error":
+            await message.answer(texts.REPORT_ERROR_HINT)
+            return
         text, markup = views.menu()
         await message.answer(text, reply_markup=markup)
+
+    @router.message(F.text.regexp(r"(?i)^ошибка\b"))
+    async def report_error(message: Message) -> None:
+        from app.config import settings
+
+        if settings.bot_admin_id:
+            user = message.from_user
+            who = f"@{user.username}" if user and user.username else f"id {message.chat.id}"
+            await message.bot.send_message(settings.bot_admin_id, f"📮 Сообщение об ошибке от {texts.escape(who)}:\n\n"
+                                                                 f"{texts.escape(message.text or '')}")
+        await message.answer("Спасибо! Передали — проверим по документу вуза и исправим.")
 
     @router.message(Command("help"))
     async def help_(message: Message) -> None:
