@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import closing with context %}
+{% block main %}
+<section class="hero">
+  <svg class="hero-road" viewBox="0 0 1200 560" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+    <path d="M-40 540 C 260 470, 560 470, 640 400 C 720 330, 560 300, 640 240 C 720 180, 900 150, 1090 92" stroke-width="22"/>
+    <path d="M60 560 C 330 500, 610 500, 700 420 C 790 340, 640 310, 700 250 C 760 190, 920 160, 1096 104" stroke-width="7"/>
+    <polygon class="star" points="1120,62 1128,86 1153,86 1133,101 1140,125 1120,110 1100,125 1107,101 1087,86 1112,86"/>
+  </svg>
+  <div class="wrap">
+    <h1>Какая олимпиада откроет дорогу в твой вуз</h1>
+    <p class="lead">Ищи олимпиаду и смотри, где она даёт поступление без экзаменов или 100 баллов: на какие программы, победителям или призёрам, с каким ЕГЭ.</p>
+    <form class="search" action="/olympiads" method="get" role="search">
+      <input id="q" name="q" aria-label="Олимпиада" placeholder="Например: Высшая проба, Физтех, математика" autocomplete="off">
+      <button type="submit">Найти</button>
+    </form>
+    <p class="quick">Часто ищут:
+      {% for o in popular %}<a href="/olympiad/{{ o.id }}">{{ short(o) }}</a>{% endfor %}
+    </p>
+    <p class="facts">В перечне {{ current_year }} — <b>{{ olympiad_count }}</b> олимпиад; льготы собраны по <b>{{ university_count }}</b> вузам.</p>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <h2>Как пользоваться</h2>
+    <div class="how">
+      <div><h3><span class="step">1</span>Найди олимпиаду</h3><p class="muted">По названию, предмету или профилю. В карточке — уровни за пять лет и ближайшие этапы.</p></div>
+      <div><h3><span class="step">2</span>Укажи свой диплом</h3><p class="muted">Профиль, победитель или призёр, класс — останутся только вузы, где диплом сработает.</p></div>
+      <div><h3><span class="step">3</span>Сохрани и сверь</h3><p class="muted">Скачай PDF со всеми программами и открой документ вуза по ссылке рядом с каждой льготой.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <h2>Вузы</h2>
+    <p class="muted">Пока вузы не выложили особые права на приём {{ admission_year }}, показываем документы прошлого года — они помечены.</p>
+    <div class="uni-strip">
+      {% for u in universities %}<a href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<div class="wrap">{{ closing() }}</div>
+{% endblock %}

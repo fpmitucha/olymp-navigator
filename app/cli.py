@@ -597,6 +597,22 @@ def cmd_benefits_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web_run(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from app.web.main import create_app
+    except ImportError as exc:
+        print(f"Не установлены зависимости сайта ({exc}). Выполните: py -m pip install -r requirements.txt",
+              file=sys.stderr)
+        return 1
+    catalog = _catalog()
+    app = create_app(catalog, _benefits(catalog, strict=False), stages_db=settings.bot_db_path)
+    print(f"Сайт: http://{args.host}:{args.port}  (остановка — Ctrl+C)")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -845,6 +861,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rsr-year", default="2025/26")
     p.add_argument("--url", default=mephi_url)
     p.set_defaults(func=cmd_benefits_import_mephi)
+
+    web = groups.add_parser("web", help="сайт").add_subparsers(dest="command", required=True)
+    p = web.add_parser("run", help="запустить сайт локально")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=cmd_web_run)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")

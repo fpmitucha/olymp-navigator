@@ -10,5 +10,8 @@ reportlab>=4.0         # PDF со льготами (кнопка «📄 Скач
 
 # Подключатся на следующих этапах:
 # psycopg[binary]>=3.2   # PostgreSQL для бота и сайта на сервере
-# fastapi>=0.115         # API сайта (этап 4)
-# uvicorn>=0.30
+
+# Сайт
+fastapi>=0.115
+uvicorn>=0.30
+jinja2>=3.1

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status with context %}
+{% block title %}Вузы: льготы для олимпиадников · Бвишечка{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="page-head">
+    <h1>Вузы</h1>
+    <p class="muted">Особые права для победителей и призёров олимпиад. До публикации документов на приём {{ admission_year }} — данные прошлого года.</p>
+  </div>
+  <ul class="list">
+    {% for u, counts, olympiads in rows %}
+    <li>
+      <a class="title" href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a>
+      <span class="meta">{{ u.full_name }} · {{ status(u, admission_year) }}</span>
+      <span class="side">{{ olympiads }} олимпиад<br>{% if counts.bvi %}БВИ: {{ counts.bvi }} правил{% else %}без БВИ{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <div style="height:64px"></div>
+</div>
+{% endblock %}

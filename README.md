@@ -172,6 +172,21 @@ python -m app.cli stages import stages.csv   # повторный импорт �
 python -m app.cli stages list
 ```
 
+## Сайт
+
+Те же данные, что у бота: олимпиады с уровнями по годам и ближайшими этапами, льготы вузов,
+подбор по диплому, страницы «олимпиада + вуз» с полной таблицей программ и PDF.
+
+```bash
+pip install -r requirements.txt
+python -m app.cli web run            # http://127.0.0.1:8000
+```
+
+Страницы: `/`, `/olympiads?q=…&level=1`, `/olympiad/<id>` (подбор — параметрами `profile`, `diploma`,
+`grade`), `/olympiad/<id>/<вуз>`, `/olympiad/<id>/pdf?profile=…`, `/universities`, `/university/<вуз>`.
+JSON: `/api/olympiads?q=…`, `/api/fit?olympiad=…&profile=…&diploma=winner|prize&grade=11`,
+описание API — `/api/docs`. Даты этапов сайт берёт из базы бота (`data/bot.sqlite3`).
+
 ## Тесты
 
 ```bash

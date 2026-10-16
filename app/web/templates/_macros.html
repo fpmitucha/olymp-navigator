@@ -1,0 +1,35 @@
+{% macro badge(kind) -%}
+<span class="badge b-{{ kind }}">{{ {'bvi': 'БВИ', 'score100': '100 ЕГЭ', 'dvi100': '100 ДВИ'}[kind] }}</span>
+{%- endmacro %}
+
+{% macro plural(n, one, few, many) -%}
+{{ n }} {% if n % 10 == 1 and n % 100 != 11 %}{{ one }}{% elif n % 10 in [2,3,4] and n % 100 not in [12,13,14] %}{{ few }}{% else %}{{ many }}{% endif %}
+{%- endmacro %}
+
+{% macro status(u, admission_year) -%}
+<span class="status {% if u.admission_year < admission_year %}old{% endif %}">{{ u.status_label(admission_year) }}</span>
+{%- endmacro %}
+
+{% macro groups(list) -%}
+<ul class="groups">
+  {% for g in list %}
+  <li>
+    <div>{{ badge(g.benefit) }}</div>
+    <div><span class="who">{{ diplomas[g.diploma] }}:</span>
+      {% for p, n in g.profiles %}{{ p }}{% if n %} <span class="muted">({{ plural(n, 'программа', 'программы', 'программ') }})</span>{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}
+      {% if g.scores %}<span class="muted nowrap"> · ЕГЭ от {{ g.scores[0] }}{% if g.scores|length > 1 %}–{{ g.scores[-1] }}{% endif %}</span>{% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{%- endmacro %}
+
+{% macro closing() -%}
+<div class="closing">
+  <div>
+    <h2>Поможем пройти весь путь</h2>
+    <p>Подберём олимпиады под твой вуз и направление, напомним о регистрации и каждом этапе, подскажем, как готовиться, — вплоть до получения нужного диплома и поступления.</p>
+  </div>
+  <a class="btn" href="{{ bot_url }}">Открыть бот</a>
+</div>
+{%- endmacro %}

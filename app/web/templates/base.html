@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Бвишечка — олимпиады и льготы при поступлении{% endblock %}</title>
+  <meta name="description" content="{% block description %}Какая олимпиада даёт БВИ или 100 баллов в нужный вуз, на какие программы и при каком ЕГЭ. Данные из документов вузов со ссылками на источник.{% endblock %}">
+  <link rel="icon" href="/assets/logo-mark.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/assets/logo-mark.png" alt="">Бвишечка</a>
+    {% set path = request.url.path %}
+    <nav class="site-nav">
+      <a href="/olympiads" {% if path.startswith('/olympiad') %}aria-current="page"{% endif %}>Олимпиады</a>
+      <a href="/universities" {% if path.startswith('/universit') %}aria-current="page"{% endif %}>Вузы</a>
+    </nav>
+    <a class="bot-link" href="{{ bot_url }}">Бот в Telegram</a>
+  </div>
+</header>
+<main>{% block main %}{% endblock %}</main>
+<footer class="site-foot">
+  <div class="wrap">
+    <span>Бвишечка не официальный источник: перед подачей документов сверяйтесь с правилами приёма вуза.</span>
+    <span>Нашли ошибку? <a href="{{ bot_url }}?start=error">Напишите в бот</a></span>
+  </div>
+</footer>
+</body>
+</html>
