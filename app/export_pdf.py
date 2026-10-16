@@ -25,14 +25,15 @@ from app.benefits import BENEFIT_TYPES, DIPLOMAS, Rule, UniversityBenefits
 from app.catalog import CatalogOlympiad
 
 FONTS = Path(__file__).parent / "assets" / "fonts"
-BRAND = "БВИшечка"
+BRAND = "Бвишечка"
 BRAND_LINE = "навигатор по олимпиадам и льготам вузов · t.me/bvishechka_bot"
 
-# Палитра бота: спокойный индиго для шапки, у каждой льготы свой цвет метки
-INK = colors.HexColor("#1F2330")
+# Палитра логотипа: графитовые линии и золотая звезда; у каждой льготы свой цвет метки
+INK = colors.HexColor("#1F1F22")
+GOLD = colors.HexColor("#C0952D")
 MUTED = colors.HexColor("#6B7080")
 RULE_LINE = colors.HexColor("#E3E5EC")
-BRAND_COLOR = colors.HexColor("#3D3FA8")
+BRAND_COLOR = colors.HexColor("#232326")
 BADGE = {
     "bvi": colors.HexColor("#1E8E5A"),
     "score100": colors.HexColor("#2463D6"),
@@ -51,38 +52,38 @@ NOTE_BORDER = colors.HexColor("#E8B23A")
 CLOSING_TITLE = "Поможем пройти весь путь"
 CLOSING_TEXT = ("Сопроводим на всех этапах: подберём олимпиады под твой вуз и направление, напомним о регистрации "
                 "и каждом этапе, подскажем, как готовиться, — вплоть до получения нужного диплома и поступления.")
-WATERMARK_WIDTH = 125 * mm
-WATERMARK_OPACITY = 0.07
+LOGO = Path(__file__).parent / "assets" / "logo.png"
+WATERMARK_WIDTH = 150 * mm
+WATERMARK_OPACITY = 0.08
 
 _registered = False
 _avatar_cache: dict[tuple[str, float], tuple] = {}
 
 
 def avatar_path() -> Path | None:
-    """Аватарка бота: бот скачивает её из Telegram при запуске в data/avatar.jpg; можно положить свою avatar.png."""
+    """Логотип для водяного знака: data/avatar.png (своя картинка) → логотип из репозитория →
+    аватарка, которую бот скачал из Telegram (data/avatar.jpg)."""
     from app.config import settings
 
-    for name in ("avatar.png", "avatar.jpg"):
-        path = Path(settings.data_dir) / name
-        if path.exists():
-            return path
-    return None
+    candidates = [Path(settings.data_dir) / "avatar.png", LOGO, Path(settings.data_dir) / "avatar.jpg"]
+    return next((p for p in candidates if p.exists()), None)
 
 
 def _faded_avatar(path: Path, opacity: float):
     """(ImageReader полупрозрачной круглой аватарки, ширина/высота). Pillow ставится вместе с reportlab."""
     key = (str(path), opacity, path.stat().st_mtime)
     if key not in _avatar_cache:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageOps
         from reportlab.lib.utils import ImageReader
 
-        img = Image.open(path).convert("RGBA")
+        img = Image.open(path).convert("RGB")
         side = min(img.size)
         img = img.crop(((img.width - side) // 2, (img.height - side) // 2,
-                        (img.width + side) // 2, (img.height + side) // 2)).resize((600, 600))
-        mask = Image.new("L", img.size, 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, *img.size), fill=int(255 * opacity))
-        img.putalpha(mask)
+                        (img.width + side) // 2, (img.height + side) // 2)).resize((800, 800))
+        # белый фон логотипа → прозрачный: остаются только линии и звезда
+        alpha = ImageOps.invert(img.convert("L")).point(lambda v: int(min(255, v * 1.6) * opacity))
+        img = img.convert("RGBA")
+        img.putalpha(alpha)
         buf = io.BytesIO()
         img.save(buf, "PNG")
         buf.seek(0)
@@ -197,7 +198,7 @@ def _university_block(u: UniversityBenefits, rules: list[Rule], admission_year: 
     table = Table(data, colWidths=[18 * mm, 34 * mm, 40 * mm, None], repeatRows=1, splitByRow=1)
     table.setStyle(TableStyle(style))
     flow.append(table)
-    source = (f'Источник: <link href="{escape(u.source_url)}" color="#3D3FA8">'
+    source = (f'Источник: <link href="{escape(u.source_url)}" color="#9A7420">'
               f"{escape(u.source_title or u.source_url)}</link>, проверено {u.checked_at.strftime('%d.%m.%Y')}")
     flow += [Spacer(1, 1.5 * mm), Paragraph(source, st["small"]), Spacer(1, 7 * mm)]
     return flow
@@ -238,14 +239,15 @@ def _chunks(programs: list[str]) -> list[list[str]]:
 
 def _closing_box(st, width: float) -> Table:
     """Финальный блок: сопровождаем до диплома."""
-    title = ParagraphStyle("closing_title", parent=st["uni"], textColor=colors.white, fontSize=13.5, leading=17)
+    title = ParagraphStyle("closing_title", parent=st["uni"], textColor=GOLD, fontSize=13.5, leading=17)
     body = ParagraphStyle("closing_body", parent=st["note"], textColor=colors.white, fontSize=9.5, leading=13)
     link = ParagraphStyle("closing_link", parent=body, fontName="Sans-Bold")
     box = Table([[Paragraph(CLOSING_TITLE, title)], [Paragraph(CLOSING_TEXT, body)],
-                 [Paragraph('Пиши боту: <link href="https://t.me/bvishechka_bot" color="#FFFFFF">'
+                 [Paragraph('Пиши боту: <link href="https://t.me/bvishechka_bot" color="#E2BE62">'
                             "t.me/bvishechka_bot</link>", link)]], colWidths=[width])
     box.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), BRAND_COLOR),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, GOLD),
         ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12),
         ("TOPPADDING", (0, 0), (-1, 0), 11), ("BOTTOMPADDING", (0, -1), (-1, -1), 11),
         ("TOPPADDING", (0, 1), (-1, -1), 3),
@@ -290,17 +292,20 @@ def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, lis
         if watermark is not None:  # водяной знак — под содержимым страницы
             canvas.drawImage(watermark, (w - WATERMARK_WIDTH) / 2, (h - WATERMARK_WIDTH) / 2 - 8 * mm,
                              WATERMARK_WIDTH, WATERMARK_WIDTH, mask="auto")
-        canvas.setFillColor(BRAND_COLOR)
-        canvas.rect(0, h - 11 * mm, w, 11 * mm, stroke=0, fill=1)
+        # шапка: логотип, название, золотая линия
         x = margin
         if header_icon is not None:
-            canvas.drawImage(header_icon, margin, h - 9.5 * mm, 8 * mm, 8 * mm, mask="auto")
-            x += 10 * mm
-        canvas.setFillColor(colors.white)
-        canvas.setFont("Sans-Bold", 10.5)
-        canvas.drawString(x, h - 7.2 * mm, BRAND)
+            canvas.drawImage(header_icon, margin - 1.5 * mm, h - 13 * mm, 12 * mm, 12 * mm, mask="auto")
+            x += 11 * mm
+        canvas.setFillColor(INK)
+        canvas.setFont("Sans-Bold", 12)
+        canvas.drawString(x, h - 8.6 * mm, BRAND)
+        canvas.setFillColor(MUTED)
         canvas.setFont("Sans", 8)
-        canvas.drawString(x + pdfmetrics.stringWidth(BRAND, "Sans-Bold", 10.5) + 3 * mm, h - 7.2 * mm, BRAND_LINE)
+        canvas.drawString(x + pdfmetrics.stringWidth(BRAND, "Sans-Bold", 12) + 3 * mm, h - 8.6 * mm, BRAND_LINE)
+        canvas.setStrokeColor(GOLD)
+        canvas.setLineWidth(0.8)
+        canvas.line(margin, h - 13.5 * mm, w - margin, h - 13.5 * mm)
         canvas.setFillColor(MUTED)
         canvas.setFont("Sans", 7)
         canvas.drawString(margin, 8 * mm, f"Сформировано {today.strftime('%d.%m.%Y')}. Не является официальным "
@@ -308,7 +313,7 @@ def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, lis
         canvas.drawRightString(w - margin, 8 * mm, f"стр. {doc.page}")
         canvas.restoreState()
 
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=margin, rightMargin=margin, topMargin=17 * mm,
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=margin, rightMargin=margin, topMargin=20 * mm,
                             bottomMargin=15 * mm, title=f"Льготы: {name}", author=BRAND)
     width = A4[0] - 2 * margin
     flow = [Paragraph(escape(name), st["title"]), Spacer(1, 1.5 * mm),
