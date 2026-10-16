@@ -268,7 +268,7 @@ def _note_box(lines: list[str], st, width: float) -> Table:
 
 def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, list[Rule]]], admission_year: int,
                  *, subtitle: str = "", notes: list[str] | None = None, today: date | None = None,
-                 avatar: Path | None = None) -> bytes:
+                 avatar: Path | None | str = "auto") -> bytes:
     """PDF: олимпиада → по каждому вузу таблица правил. notes — предупреждения (текст бота, HTML можно)."""
     _fonts()
     st = _styles()
@@ -277,7 +277,7 @@ def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, lis
     margin = 15 * mm
     name = "Всероссийская олимпиада школьников (ВсОШ)" if o.is_vsosh else o.name
 
-    avatar = avatar if avatar is not None else avatar_path()
+    avatar = avatar_path() if avatar == "auto" else avatar  # None — без логотипа
     watermark = header_icon = None
     if avatar:
         try:
