@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
@@ -228,3 +229,71 @@ async def benefits_watch_loop(db_path: str, sources_path, admission_year: int, s
             except Exception:  # noqa: BLE001
                 log.exception("Сбой слежения за вузами")
         await asyncio.sleep(check_every)
+
+
+BENEFITS_SNAPSHOT_PREFIX = "benefits_snapshot:"
+
+
+def benefits_updates(storage: Storage, benefits) -> list[tuple]:
+    """Вузы, чьи льготы изменились с прошлого запуска бота: (вуз, прошлая подпись, прошлый снимок).
+    При первом запуске только запоминаем — сообщать не о чем."""
+    from app.benefits_diff import dump_snapshot
+
+    changed = []
+    for u in benefits.latest():
+        key = BENEFITS_SNAPSHOT_PREFIX + u.university
+        label = f"{u.admission_year}:{u.document_status}"
+        current = dump_snapshot(u.rules)
+        stored = storage.get_meta(key)
+        if stored is None:
+            storage.set_meta(key, json.dumps({"label": label, "snapshot": current}, ensure_ascii=False))
+            continue
+        previous = json.loads(stored)
+        if previous["snapshot"] != current or previous["label"] != label:
+            changed.append((u, previous["label"], previous["snapshot"]))
+    return changed
+
+
+async def send_benefits_updates(storage: Storage, catalog: Catalog, benefits, send: SendFn,
+                                admin_id: int = 0, pause: float = SEND_PAUSE) -> int:
+    """Подписчикам вуза — что изменилось в льготах (по их олимпиадам — в первую очередь)."""
+    from app.benefits_diff import diff, load_snapshot, snapshot
+
+    sent = 0
+    for u, old_label, old_snapshot in benefits_updates(storage, benefits):
+        old_rows, names = load_snapshot(old_snapshot)
+        names.update({r.olympiad.id: r.olympiad.name for r in u.rules})
+        changes = diff(old_rows, snapshot(u.rules), names)
+        users = storage.university_subscribers(u.university)
+        for telegram_id in dict.fromkeys(([admin_id] if admin_id else []) + users):
+            focus = {catalog.canonical_id(o) for o in storage.subscriptions(telegram_id)}
+            text = texts.benefits_changed(u, old_label, changes, focus)
+            try:
+                await send(telegram_id, text)
+                sent += 1
+            except UserBlocked:
+                storage.deactivate_user(telegram_id)
+            except Exception:  # noqa: BLE001
+                log.exception("Не отправилось сообщение об изменениях льгот %s пользователю %s",
+                              u.university, telegram_id)
+            if pause:
+                await asyncio.sleep(pause)
+        from app.benefits_diff import dump_snapshot
+
+        storage.set_meta(BENEFITS_SNAPSHOT_PREFIX + u.university, json.dumps(
+            {"label": f"{u.admission_year}:{u.document_status}", "snapshot": dump_snapshot(u.rules)},
+            ensure_ascii=False))
+        log.info("Льготы %s изменились (%s изменений) — сообщено %s подписчикам", u.university, len(changes),
+                 len(users))
+    return sent
+
+
+async def benefits_updates_loop(storage: Storage, catalog: Catalog, benefits, send: SendFn,
+                                admin_id: int = 0, interval: float = 15 * 60) -> None:
+    """При запуске бота сравнивает льготы с прошлым запуском; ночью ждёт утра."""
+    while is_quiet_time(moscow_now()):
+        await asyncio.sleep(interval)
+    try:
+        await send_benefits_updates(storage, catalog, benefits, send, admin_id)
+    except Exception:  # noqa: BLE001
+        log.exception("Сбой рассылки об изменениях льгот")

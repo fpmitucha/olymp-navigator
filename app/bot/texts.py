@@ -752,3 +752,26 @@ def benefits_published(university: str, findings: list, admission_year: int) -> 
     lines += ["", "Похоже, вуз опубликовал особые права для олимпиадников. Мы проверим документ и обновим льготы "
                   "в боте — до этого в боте данные прошлого года."]
     return "\n".join(lines)
+
+
+def benefits_changed(u: UniversityBenefits, old_label: str, changes: list, focus: set[str]) -> str:
+    """Вуз обновил льготы: было → стало, что изменилось (⭐ — олимпиады из подписок)."""
+    from app.benefits_diff import summarize
+
+    old_year, _, old_status = old_label.partition(":")
+    status = "проект" if u.is_draft else "утверждено"
+    lines = [f"🎓 <b>{escape(u.university)}: льготы на приём {u.admission_year} ({status})</b>"]
+    if str(u.admission_year) != old_year:
+        lines.append(f"<i>Сравнение с приёмом {old_year}</i>")
+    elif old_status == "draft" and not u.is_draft:
+        lines.append("<i>Проект утвердили — сравнение с проектом</i>")
+    lines.append("")
+    if changes:
+        lines += summarize(changes, focus=focus)
+        if any(c.olympiad_id in focus for c in changes):
+            lines.append("⭐ — олимпиады из твоих подписок.")
+    else:
+        lines.append("По сути ничего не изменилось: те же олимпиады и те же льготы.")
+    lines.append(f'Подробнее — в боте: 🎓 Вузы → {escape(u.university)}. '
+                 f'<a href="{escape(u.source_url, quote=True)}">Документ вуза</a>')
+    return _fit(lines, more="Полный список — в боте.")

@@ -579,6 +579,24 @@ def cmd_benefits_pdf(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benefits_diff(args: argparse.Namespace) -> int:
+    import json
+    import re
+
+    from app.benefits import parse_file
+    from app.benefits_diff import diff_universities, summarize
+
+    catalog = _catalog()
+    old = parse_file(json.loads(Path(args.old).read_text(encoding="utf-8")), catalog, args.old)
+    new = parse_file(json.loads(Path(args.new).read_text(encoding="utf-8")), catalog, args.new)
+    changes = diff_universities(old, new)
+    print(f"{new.university}: приём {old.admission_year} ({old.document_status}) → "
+          f"{new.admission_year} ({new.document_status}), изменений: {len(changes)}\n")
+    for line in summarize(changes, limit=args.limit):
+        print(re.sub(r"<[^>]+>", "", line))
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -806,6 +824,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default="https://www.fa.ru/upload/constructor/918/oxs36ll62co031uhysc4la3e86r9numg/"
                                     "Perechen-olimpiad-shkolnikov-2026.pdf")
     p.set_defaults(func=cmd_benefits_import_fa)
+    p = ben.add_parser("diff", help="что изменилось между двумя файлами льгот вуза (например, 2026 → 2027)")
+    p.add_argument("old")
+    p.add_argument("new")
+    p.add_argument("--limit", type=int, default=30, help="сколько строк показывать в каждом разделе")
+    p.set_defaults(func=cmd_benefits_diff)
     p = ben.add_parser("pdf", help="PDF со льготами олимпиады (как в боте)")
     p.add_argument("olympiad", help="название или часть названия")
     p.add_argument("--profile", default="", help="профиль, например «математика»")

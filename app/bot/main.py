@@ -37,7 +37,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot import texts
 from app.bot.notifier import (
-    TemporaryError, UserBlocked, benefits_watch_loop, moscow_now, reminder_loop, stages_sync_loop,
+    TemporaryError, UserBlocked, benefits_updates_loop, benefits_watch_loop, moscow_now, reminder_loop,
+    stages_sync_loop,
 )
 from app.bot.storage import Storage
 from app.benefits import DIPLOMA_CHOICES, BenefitsCatalog, fitting, olympiad_profiles, profile_level
@@ -684,6 +685,8 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
         from app.config import PROJECT_ROOT, settings
 
         admission_year = int(catalog.current_year[:4]) + 1
+        tasks.append(asyncio.create_task(benefits_updates_loop(
+            storage, catalog, benefits or BenefitsCatalog(), make_sender(bot), admin_id=settings.bot_admin_id)))
         tasks.append(asyncio.create_task(benefits_watch_loop(
             storage.path, PROJECT_ROOT / "benefits" / "watch" / "sources.json", admission_year,
             make_sender(bot), admin_id=settings.bot_admin_id)))
