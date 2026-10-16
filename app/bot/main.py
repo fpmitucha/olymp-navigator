@@ -15,6 +15,7 @@ import logging
 import math
 import socket
 from datetime import date
+from pathlib import Path
 from typing import Callable
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -632,6 +633,24 @@ def make_bot(token: str, proxy: str = "", force_ipv4: bool = True) -> Bot:
                default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
 
 
+async def save_bot_avatar(bot: Bot, bot_id: int, folder: Path) -> Path | None:
+    """Скачивает аватарку бота в data/avatar.jpg — она идёт водяным знаком в PDF.
+    Свою картинку можно положить в data/avatar.png: она важнее и не перезаписывается."""
+    try:
+        photos = await bot.get_user_profile_photos(bot_id, limit=1)
+        if not photos.photos:
+            log.info("У бота нет аватарки — PDF будут без водяного знака")
+            return None
+        file = await bot.get_file(photos.photos[0][-1].file_id)
+        target = folder / "avatar.jpg"
+        folder.mkdir(parents=True, exist_ok=True)
+        await bot.download_file(file.file_path, destination=target)
+        return target
+    except Exception:  # noqa: BLE001 — без аватарки бот работает, PDF просто без водяного знака
+        log.warning("Не удалось скачать аватарку бота", exc_info=True)
+        return None
+
+
 async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", force_ipv4: bool = True,
               stages_autosync: bool = True, benefits: BenefitsCatalog | None = None) -> None:
     bot = make_bot(token, proxy=proxy, force_ipv4=force_ipv4)
@@ -649,6 +668,10 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
     if webhook.url:
         log.warning("У бота был установлен вебхук %s — удаляю, чтобы работал опрос", webhook.url)
         await bot.delete_webhook()
+    if storage.path != ":memory:":
+        from app.config import settings as app_settings
+
+        await save_bot_avatar(bot, me.id, Path(app_settings.data_dir))
     log.info("Бот @%s запущен. Олимпиад в каталоге: %s, годы: %s",
              me.username, len(catalog.olympiads), ", ".join(catalog.years))
     print(f"\nНапишите боту: https://t.me/{me.username}  (каждое сообщение появится здесь строкой «Update id=…»)\n")

@@ -48,7 +48,46 @@ NOTE_BG = colors.HexColor("#FFF6DD")
 PROGRAMS_CHARS_PER_ROW = 700  # строка таблицы не может переходить на новую страницу — режем длинные списки
 NOTE_BORDER = colors.HexColor("#E8B23A")
 
+CLOSING_TITLE = "Поможем пройти весь путь"
+CLOSING_TEXT = ("Сопроводим на всех этапах: подберём олимпиады под твой вуз и направление, напомним о регистрации "
+                "и каждом этапе, подскажем, как готовиться, — вплоть до получения нужного диплома и поступления.")
+WATERMARK_WIDTH = 125 * mm
+WATERMARK_OPACITY = 0.07
+
 _registered = False
+_avatar_cache: dict[tuple[str, float], tuple] = {}
+
+
+def avatar_path() -> Path | None:
+    """Аватарка бота: бот скачивает её из Telegram при запуске в data/avatar.jpg; можно положить свою avatar.png."""
+    from app.config import settings
+
+    for name in ("avatar.png", "avatar.jpg"):
+        path = Path(settings.data_dir) / name
+        if path.exists():
+            return path
+    return None
+
+
+def _faded_avatar(path: Path, opacity: float):
+    """(ImageReader полупрозрачной круглой аватарки, ширина/высота). Pillow ставится вместе с reportlab."""
+    key = (str(path), opacity, path.stat().st_mtime)
+    if key not in _avatar_cache:
+        from PIL import Image, ImageDraw
+        from reportlab.lib.utils import ImageReader
+
+        img = Image.open(path).convert("RGBA")
+        side = min(img.size)
+        img = img.crop(((img.width - side) // 2, (img.height - side) // 2,
+                        (img.width + side) // 2, (img.height + side) // 2)).resize((600, 600))
+        mask = Image.new("L", img.size, 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, *img.size), fill=int(255 * opacity))
+        img.putalpha(mask)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        buf.seek(0)
+        _avatar_cache[key] = (ImageReader(buf), 1.0)
+    return _avatar_cache[key][0]
 
 
 def _fonts() -> None:
@@ -197,6 +236,23 @@ def _chunks(programs: list[str]) -> list[list[str]]:
     return chunks + [current] if current else chunks
 
 
+def _closing_box(st, width: float) -> Table:
+    """Финальный блок: сопровождаем до диплома."""
+    title = ParagraphStyle("closing_title", parent=st["uni"], textColor=colors.white, fontSize=13.5, leading=17)
+    body = ParagraphStyle("closing_body", parent=st["note"], textColor=colors.white, fontSize=9.5, leading=13)
+    link = ParagraphStyle("closing_link", parent=body, fontName="Sans-Bold")
+    box = Table([[Paragraph(CLOSING_TITLE, title)], [Paragraph(CLOSING_TEXT, body)],
+                 [Paragraph('Пиши боту: <link href="https://t.me/bvishechka_bot" color="#FFFFFF">'
+                            "t.me/bvishechka_bot</link>", link)]], colWidths=[width])
+    box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BRAND_COLOR),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, 0), 11), ("BOTTOMPADDING", (0, -1), (-1, -1), 11),
+        ("TOPPADDING", (0, 1), (-1, -1), 3),
+    ]))
+    return box
+
+
 def _note_box(lines: list[str], st, width: float) -> Table:
     box = Table([[Paragraph("<br/>".join(escape(x) for x in lines), st["note"])]], colWidths=[width])
     box.setStyle(TableStyle([
@@ -209,7 +265,8 @@ def _note_box(lines: list[str], st, width: float) -> Table:
 
 
 def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, list[Rule]]], admission_year: int,
-                 *, subtitle: str = "", notes: list[str] | None = None, today: date | None = None) -> bytes:
+                 *, subtitle: str = "", notes: list[str] | None = None, today: date | None = None,
+                 avatar: Path | None = None) -> bytes:
     """PDF: олимпиада → по каждому вузу таблица правил. notes — предупреждения (текст бота, HTML можно)."""
     _fonts()
     st = _styles()
@@ -218,17 +275,32 @@ def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, lis
     margin = 15 * mm
     name = "Всероссийская олимпиада школьников (ВсОШ)" if o.is_vsosh else o.name
 
+    avatar = avatar if avatar is not None else avatar_path()
+    watermark = header_icon = None
+    if avatar:
+        try:
+            watermark = _faded_avatar(avatar, WATERMARK_OPACITY)
+            header_icon = _faded_avatar(avatar, 1.0)
+        except Exception:  # noqa: BLE001 — битая картинка не должна ломать PDF
+            watermark = header_icon = None
+
     def decorate(canvas, doc):
         canvas.saveState()
         w, h = A4
+        if watermark is not None:  # водяной знак — под содержимым страницы
+            canvas.drawImage(watermark, (w - WATERMARK_WIDTH) / 2, (h - WATERMARK_WIDTH) / 2 - 8 * mm,
+                             WATERMARK_WIDTH, WATERMARK_WIDTH, mask="auto")
         canvas.setFillColor(BRAND_COLOR)
         canvas.rect(0, h - 11 * mm, w, 11 * mm, stroke=0, fill=1)
+        x = margin
+        if header_icon is not None:
+            canvas.drawImage(header_icon, margin, h - 9.5 * mm, 8 * mm, 8 * mm, mask="auto")
+            x += 10 * mm
         canvas.setFillColor(colors.white)
         canvas.setFont("Sans-Bold", 10.5)
-        canvas.drawString(margin, h - 7.2 * mm, BRAND)
+        canvas.drawString(x, h - 7.2 * mm, BRAND)
         canvas.setFont("Sans", 8)
-        canvas.drawString(margin + pdfmetrics.stringWidth(BRAND, "Sans-Bold", 10.5) + 3 * mm, h - 7.2 * mm,
-                          BRAND_LINE)
+        canvas.drawString(x + pdfmetrics.stringWidth(BRAND, "Sans-Bold", 10.5) + 3 * mm, h - 7.2 * mm, BRAND_LINE)
         canvas.setFillColor(MUTED)
         canvas.setFont("Sans", 7)
         canvas.drawString(margin, 8 * mm, f"Сформировано {today.strftime('%d.%m.%Y')}. Не является официальным "
@@ -252,6 +324,7 @@ def benefits_pdf(o: CatalogOlympiad, entries: list[tuple[UniversityBenefits, lis
     flow += [Paragraph(legend, st["small"]), Spacer(1, 5 * mm)]
     for u, rules in entries:
         flow += _university_block(u, rules, admission_year, st)
+    flow.append(_closing_box(st, width))
     doc.build(flow, onFirstPage=decorate, onLaterPages=decorate)
     return buf.getvalue()
 
