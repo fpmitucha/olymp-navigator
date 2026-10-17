@@ -338,6 +338,83 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         return render(request, "university.html", u=u, items=items, following=following,
                       u_slug=university_slug)
 
+    # -- подбор от вуза --------------------------------------------------------
+
+    from app.routes import RouteItem, program_label, program_names, route as build_route, university_programs
+
+    names = program_names(benefits)
+
+    @app.get("/route", response_class=HTMLResponse)
+    def route_start(request: Request):
+        rows = [(u, len(university_programs(u))) for u in universities]
+        return render(request, "route_start.html", rows=rows)
+
+    @app.get("/route/{university_slug}", response_class=HTMLResponse)
+    def route_page(request: Request, university_slug: str, program: str = "", diploma: str = "prize",
+                   profile: str = ""):
+        u = by_slug.get(university_slug)
+        if u is None:
+            raise HTTPException(404, "Вуз не найден")
+        programs = [(p, program_label(p, names)) for p in university_programs(u)]
+        if program not in {p for p, _ in programs}:
+            program = ""
+        diploma = diploma if diploma in DIPLOMA_CHOICES.values() else "prize"
+        year = catalog.current_year
+        items = build_route(u, program, diploma, year) if program or not programs else []
+        all_profiles = sorted({p.profile for it in items for p in it.profiles})
+        if profile in all_profiles:
+            items = [RouteItem(it.olympiad, [p for p in it.profiles if p.profile == profile]) for it in items]
+            items = sorted((it for it in items if it.profiles), key=lambda it: (
+                not it.olympiad.is_vsosh, list(BENEFIT_TYPES).index(it.best), it.olympiad.name))
+        else:
+            profile = ""
+        with db() as s:
+            stages = {it.olympiad.id: s.upcoming_stages(it.olympiad.id, today(), limit=1) for it in items}
+        counts = Counter(it.best for it in items)
+        return render(request, "route.html", u=u, u_slug=university_slug, programs=programs, program=program,
+                      program_title=program_label(program, names), diploma=diploma, profile=profile,
+                      all_profiles=all_profiles, items=items, stages=stages, counts=counts, year=year,
+                      today=today(), chosen=bool(program or not programs))
+
+    # -- сопровождение ---------------------------------------------------------
+
+    @app.get("/help", response_class=HTMLResponse)
+    def help_page(request: Request, sent: int = 0):
+        user = current_user(request)
+        prefill = {"name": "", "grade": None}
+        already = False
+        if user:
+            with db() as s:
+                prefill = s.profile(user)
+                already = s.recent_help_request(telegram_id=user)
+        return render(request, "help.html", sent=bool(sent), prefill=prefill, already=already, error="")
+
+    @app.post("/help", response_class=HTMLResponse)
+    def help_submit(request: Request, csrf: str = Form(""), name: str = Form(""), contact: str = Form(""),
+                    grade: int = Form(0), goal: str = Form(""), consent: str = Form(""), website: str = Form("")):
+        user = check_csrf(request, csrf) if current_user(request) else None
+        name, contact, goal = name.strip()[:100], contact.strip()[:200], goal.strip()[:2000]
+        prefill = {"name": name, "grade": grade or None}
+
+        def again(error: str):
+            return render(request, "help.html", 400, sent=False, prefill=prefill, already=False, error=error,
+                          form=dict(contact=contact, goal=goal))
+
+        if website:  # поле-ловушка: человек его не видит, бот заполняет
+            return RedirectResponse("/help?sent=1", status_code=303)
+        if not consent:
+            return again("Нужно согласие на обработку данных — иначе мы не сможем с тобой связаться.")
+        if not user and len(contact) < 3:
+            return again("Оставь контакт: ник в Telegram (@…), телефон или почту.")
+        with db() as s:
+            if s.recent_help_request(telegram_id=user, contact=contact):
+                return RedirectResponse("/help?sent=1", status_code=303)
+            if s.help_requests_since(10) >= 30:  # защита от заливки формы
+                return again("Слишком много заявок за последние минуты. Попробуй чуть позже или напиши в бот.")
+            s.add_help_request(source="site", telegram_id=user, name=name, contact=contact,
+                               grade=grade if 7 <= grade <= 11 else None, goal=goal)
+        return RedirectResponse("/help?sent=1", status_code=303)
+
     # -- вход через бота -------------------------------------------------------
 
     @app.get("/login", response_class=HTMLResponse)

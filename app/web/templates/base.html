@@ -17,6 +17,7 @@
     <a class="brand" href="/"><img src="/assets/logo-mark.png" alt=""><span>Бвишечка</span></a>
     {% set path = request.url.path %}
     <nav class="site-nav">
+      <a href="/route" {% if path.startswith('/route') %}aria-current="page"{% endif %}>Подбор</a>
       <a href="/olympiads" {% if path.startswith('/olympiad') %}aria-current="page"{% endif %}>Олимпиады</a>
       <a href="/universities" {% if path.startswith('/universit') %}aria-current="page"{% endif %}>Вузы</a>
     </nav>

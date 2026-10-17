@@ -30,6 +30,33 @@ class WebTest(unittest.TestCase):
         uni = self.client.get("/universities").text
         self.assertIn("Тестовый вуз", uni)
 
+    def test_route_from_university(self):
+        self.assertIn("Тестовый вуз", self.client.get("/route").text)
+        page = self.client.get("/route/testovyy-vuz").text
+        self.assertIn("Что тебе нужно", page)
+        # у тестового вуза льготы без программ — олимпиады видны сразу
+        winner = self.client.get("/route/testovyy-vuz?diploma=winner&program=xxx")
+        self.assertEqual(winner.status_code, 200)
+        self.assertIn(f"/olympiad/{self.fiztech.id}?profile=", winner.text)
+        self.assertEqual(self.client.get("/route/nope").status_code, 404)
+
+    def test_help_request(self):
+        page = self.client.get("/help")
+        self.assertIn("Оставить заявку", page.text)
+        no_consent = self.client.post("/help", data={"name": "Аня", "contact": "@anya", "goal": "ВШЭ"})
+        self.assertEqual(no_consent.status_code, 400)
+        ok = self.client.post("/help", data={"name": "Аня", "contact": "@anya", "grade": "10", "goal": "ВШЭ, ПМИ",
+                                             "consent": "1"}, follow_redirects=False)
+        self.assertEqual(ok.headers["location"], "/help?sent=1")
+        self.client.post("/help", data={"name": "Аня", "contact": "@ANYA", "consent": "1"})  # повтор — не дублируем
+        bot = self.client.post("/help", data={"contact": "@x", "consent": "1", "website": "spam"})  # ловушка
+        self.assertEqual(bot.status_code, 200)
+        with self.app.state.db() as s:
+            pending = s.pending_help_requests()
+        self.assertEqual([(r["name"], r["contact"], r["grade"], r["source"]) for r in pending],
+                         [("Аня", "@anya", 10, "site")])
+        self.assertIn("Заявка отправлена", self.client.get("/help?sent=1").text)
+
     def test_search_redirects_to_single_result(self):
         r = self.client.get("/olympiads?q=Физтех", follow_redirects=False)
         self.assertEqual(r.status_code, 303)

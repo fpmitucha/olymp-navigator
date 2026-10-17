@@ -37,8 +37,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot import texts
 from app.bot.notifier import (
-    TemporaryError, UserBlocked, benefits_updates_loop, benefits_watch_loop, moscow_now, reminder_loop,
-    stages_sync_loop,
+    TemporaryError, UserBlocked, benefits_updates_loop, benefits_watch_loop, forward_help_requests, help_requests_loop,
+    moscow_now, reminder_loop, stages_sync_loop,
 )
 from app.bot.storage import Storage
 from app.benefits import DIPLOMA_CHOICES, BenefitsCatalog, fitting, olympiad_profiles, profile_level
@@ -58,12 +58,13 @@ class Nav(CallbackData, prefix="n"):
     a — действие: menu, help, subs, lvl (список уровня), vsosh, page (результаты поиска),
         card, sub, unsub, ben (льготы олимпиады), benu (льготы олимпиады в вузе), unis (список вузов),
         uni (вуз), pdfp (выбор профиля для PDF), pdf / pdff (прислать PDF: по профилю / по итогу подбора),
-        usub / uuns (подписка на обновления вуза, q — номер вуза), fit / fitp / fitw / fitr (подбор по диплому: профиль → победитель/призёр → класс → итог), noop
+        usub / uuns (подписка на обновления вуза, q — номер вуза), hlp / hlps (сопровождение: экран / заявка), fit / fitp / fitw / fity / fitr (подбор по диплому: профиль → победитель/призёр → класс → год диплома → итог), noop
     o — id олимпиады; q — id сохранённого запроса или номер уровня; p — страница списка
     b — куда ведёт «Назад» из карточки: "" — меню, "s" — результаты поиска, "l" — список уровня,
         "u" — подписки
     d — 1, если карточка открыта в подробном виде; в benu — номер вуза; в подборе — выбор:
-        номер профиля * 100 + (1 победитель | 2 призёр) * 10 + (класс − 8)
+        номер года диплома * 100000 + номер профиля * 100 + (1 победитель | 2 призёр) * 10 + (класс − 8);
+        год 0 — текущий сезон (так кнопки старых версий без года продолжают работать)
     """
 
     a: str
@@ -75,6 +76,13 @@ class Nav(CallbackData, prefix="n"):
 
 
 Screen = tuple[str, InlineKeyboardMarkup]
+YEAR_STEP = 100000
+
+
+def decode_fit(d: int) -> tuple[int, int, int, int]:
+    """Код выбора в подборе → (номер года диплома, номер профиля, диплом, класс − 8)."""
+    rest = d % YEAR_STEP
+    return d // YEAR_STEP, rest // 100, rest // 10 % 10, rest % 10
 
 
 class Views:
@@ -83,6 +91,8 @@ class Views:
     def __init__(self, catalog: Catalog, storage: Storage, today: Callable[[], date],
                  benefits: BenefitsCatalog | None = None):
         self.catalog = catalog
+        # диплом действует 4 года после олимпиады: на приём следующего лета годятся 5 последних перечней
+        self.diploma_years = catalog.years[:5]
         self.storage = storage
         self.today = today
         self.benefits = benefits or BenefitsCatalog()
@@ -117,9 +127,20 @@ class Views:
         kb.button(text="🏆 ВсОШ", callback_data=Nav(a="vsosh"))
         kb.button(text="🎓 Вузы", callback_data=Nav(a="unis"))
         kb.button(text="🔔 Подписки", callback_data=Nav(a="subs"))
+        kb.button(text="🤝 Сопровождение", callback_data=Nav(a="hlp"))
         kb.button(text="ℹ️ Помощь", callback_data=Nav(a="help"))
         kb.adjust(2)  # шашечкой: по две кнопки в ряд
         return texts.START, kb.as_markup()
+
+    def help_offer(self, telegram_id: int) -> Screen:
+        kb = InlineKeyboardBuilder()
+        if self.storage.recent_help_request(telegram_id=telegram_id):
+            text = texts.HELP_OFFER + "\n\n" + texts.HELP_ALREADY
+        else:
+            text = texts.HELP_OFFER
+            kb.row(InlineKeyboardButton(text="✅ Оставить заявку", callback_data=Nav(a="hlps").pack()))
+        kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+        return text, kb.as_markup()
 
     # -- списки по уровням ------------------------------------------------------
 
@@ -256,7 +277,8 @@ class Views:
         return text, kb.as_markup()
 
     def diploma_fit(self, o: CatalogOlympiad, nav: Nav) -> Screen | None:
-        """Подбор по диплому. Шаги: fit — профиль, fitp — победитель/призёр, fitw — класс, fitr — итог."""
+        """Подбор по диплому. Шаги: fit — профиль, fitp — победитель/призёр, fitw — класс,
+        fity — год диплома (если уровень профиля менялся), fitr — итог."""
         profiles = olympiad_profiles(self.benefits, o.id)
         if not profiles:
             return None
@@ -264,10 +286,15 @@ class Views:
         step = nav.a
         if step == "fit" and len(profiles) == 1:
             step, nav = "fitp", Nav(a="fitp", d=0, **keep)
-        pi, dip, grade_code = nav.d // 100, nav.d // 10 % 10, nav.d % 10
-        if pi >= len(profiles) or (step in ("fitw", "fitr") and dip not in DIPLOMA_CHOICES):
+        yi, pi, dip, grade_code = decode_fit(nav.d)
+        if pi >= len(profiles) or yi >= len(self.diploma_years) or (
+                step in ("fitw", "fity", "fitr") and dip not in DIPLOMA_CHOICES):
             return None
         profile = profiles[pi]
+        years = self.diploma_years
+        # год диплома спрашиваем, только если уровень профиля в эти годы менялся
+        ask_year = len({profile_level(o, profile, y)[0] for y in years}) > 1 and not o.is_vsosh
+        base = pi * 100 + dip * 10 + grade_code
         diploma = DIPLOMA_CHOICES.get(dip)
         back_to_benefits = InlineKeyboardButton(text="🎓 К льготам", callback_data=Nav(a="ben", **keep).pack())
         kb = InlineKeyboardBuilder()
@@ -277,10 +304,9 @@ class Views:
             kb.adjust(2)
             kb.row(back_to_benefits)
             return texts.fit_question(o, "profile"), kb.as_markup()
-        back_step = InlineKeyboardButton(
-            text="◀️ Назад", callback_data=Nav(a={"fitp": "fit", "fitw": "fitp", "fitr": "fitw"}[step],
-                                              d={"fitp": 0, "fitw": pi * 100, "fitr": pi * 100 + dip * 10}[step],
-                                              **keep).pack())
+        prev = {"fitp": ("fit", 0), "fitw": ("fitp", pi * 100), "fity": ("fitw", pi * 100 + dip * 10),
+                "fitr": ("fity", base) if ask_year else ("fitw", pi * 100 + dip * 10)}[step]
+        back_step = InlineKeyboardButton(text="◀️ Назад", callback_data=Nav(a=prev[0], d=prev[1], **keep).pack())
         if step == "fitp":
             kb.row(InlineKeyboardButton(text="🥇 Победитель", callback_data=Nav(a="fitw", d=pi * 100 + 10, **keep).pack()),
                    InlineKeyboardButton(text="🥈 Призёр", callback_data=Nav(a="fitw", d=pi * 100 + 20, **keep).pack()))
@@ -289,11 +315,21 @@ class Views:
         if step == "fitw":
             grades = (9, 10, 11) if o.is_vsosh else (10, 11)
             kb.row(*[InlineKeyboardButton(text=f"{g} класс", callback_data=Nav(
-                a="fitr", d=pi * 100 + dip * 10 + g - 8, **keep).pack()) for g in grades])
+                a="fity" if ask_year else "fitr", d=pi * 100 + dip * 10 + g - 8, **keep).pack()) for g in grades])
             kb.row(back_step, back_to_benefits)
             return texts.fit_question(o, "grade", profile, diploma), kb.as_markup()
+        if step == "fity":
+            for i, y in enumerate(years):
+                if y not in o.profiles.get(profile, {}):
+                    continue  # профиля не было в перечне — диплом того года льгот не даёт
+                level = o.profiles[profile][y].level
+                label = f"{y}" + (" · этот сезон" if i == 0 else "") + (f" · {level} уровень" if level else "")
+                kb.button(text=label, callback_data=Nav(a="fitr", d=i * YEAR_STEP + base, **keep))
+            kb.adjust(1)
+            kb.row(back_step, back_to_benefits)
+            return texts.fit_question(o, "year", profile, diploma), kb.as_markup()
         grade = grade_code + 8 if grade_code else None
-        level, level_year = profile_level(o, profile, self.catalog.current_year)
+        level, level_year = profile_level(o, profile, years[yi])
         entries = fitting(self.benefits, o.id, profile, diploma, grade, level)
         text = texts.fit_result(o, profile, diploma, grade, level, level_year, entries, self.admission_year)
         unis = self.benefits.latest()
@@ -327,11 +363,11 @@ class Views:
         from app.export_pdf import benefits_pdf, pdf_filename
 
         profiles = olympiad_profiles(self.benefits, o.id)
-        pi, dip, grade_code = nav.d // 100, nav.d // 10 % 10, nav.d % 10
-        if pi >= len(profiles):
+        yi, pi, dip, grade_code = decode_fit(nav.d)
+        if pi >= len(profiles) or yi >= len(self.diploma_years):
             return None
         profile = profiles[pi]
-        level, level_year = profile_level(o, profile, self.catalog.current_year)
+        level, level_year = profile_level(o, profile, self.diploma_years[yi])
         notes = []
         if nav.a == "pdff":
             diploma = DIPLOMA_CHOICES.get(dip)
@@ -456,6 +492,10 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
         if payload == "error":
             await message.answer(texts.REPORT_ERROR_HINT)
             return
+        if payload == "help":
+            text, markup = views.help_offer(message.chat.id)
+            await message.answer(text, reply_markup=markup)
+            return
         text, markup = views.menu()
         await message.answer(text, reply_markup=markup)
 
@@ -504,6 +544,20 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
             await show(callback, views.menu())
         elif nav.a == "help":
             await show(callback, views.help())
+        elif nav.a == "hlp":
+            await show(callback, views.help_offer(user_id))
+        elif nav.a == "hlps":
+            from app.config import settings
+
+            if not storage.recent_help_request(telegram_id=user_id):
+                user = callback.from_user
+                storage.add_help_request(source="bot", telegram_id=user_id, username=user.username or "",
+                                         name=" ".join(x for x in (user.first_name, user.last_name) if x))
+                if settings.bot_admin_id:
+                    await forward_help_requests(storage, catalog, make_sender(callback.bot), settings.bot_admin_id)
+            kb = InlineKeyboardBuilder()
+            kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
+            await show(callback, (texts.HELP_SENT, kb.as_markup()))
         elif nav.a == "subs":
             await show(callback, views.subs(user_id))
         elif nav.a == "lvl" and nav.q in LEVELS:
@@ -543,7 +597,7 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                 await callback.answer("Поиск устарел, отправь запрос заново.", show_alert=True)
                 return
             await show(callback, screen)
-        elif nav.a in ("card", "sub", "unsub", "ben", "benu", "fit", "fitp", "fitw", "fitr", "pdfp", "pdf", "pdff"):
+        elif nav.a in ("card", "sub", "unsub", "ben", "benu", "fit", "fitp", "fitw", "fity", "fitr", "pdfp", "pdf", "pdff"):
             o = catalog.get(nav.o)
             if o is None:
                 await callback.answer("Олимпиада не найдена — перечень обновился. Поищи её заново.", show_alert=True)
@@ -565,7 +619,7 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
                     await stale_button(callback)
                     return
                 await show(callback, screen)
-            elif nav.a in ("benu", "fit", "fitp", "fitw", "fitr"):
+            elif nav.a in ("benu", "fit", "fitp", "fitw", "fity", "fitr"):
                 screen = views.olympiad_university(o, nav) if nav.a == "benu" else views.diploma_fit(o, nav)
                 if screen is None:
                     await stale_button(callback)
@@ -713,6 +767,8 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
         tasks.append(asyncio.create_task(benefits_watch_loop(
             storage.path, PROJECT_ROOT / "benefits" / "watch" / "sources.json", admission_year,
             make_sender(bot), admin_id=settings.bot_admin_id)))
+        tasks.append(asyncio.create_task(help_requests_loop(storage.path, catalog, make_sender(bot),
+                                                            settings.bot_admin_id)))
     try:
         await dp.start_polling(bot)
     finally:

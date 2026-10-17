@@ -275,6 +275,57 @@ table.rules td.programs { color: var(--ink-2); }
 .site-foot { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
 .site-foot .wrap { display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: space-between; }
 
+/* Сопровождение */
+.wrap.help-page { display: grid; grid-template-columns: 1fr minmax(0, 480px); gap: 48px; padding: 56px 24px 72px; align-items: start; }
+.help-intro h1 { font: 700 clamp(30px, 4.4vw, 48px)/1.08 var(--display); margin: 0 0 16px; }
+.help-intro .lead { font-size: 18px; color: var(--ink-2); max-width: 34em; }
+.steps { list-style: none; counter-reset: step; padding: 0; margin: 28px 0 0; display: grid; gap: 18px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; column-gap: 14px; }
+.steps li::before { content: counter(step); grid-row: span 2; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 18px var(--display); background: var(--gold-soft); color: var(--gold-deep); }
+.steps li:last-child::before { content: "★"; background: var(--gold); color: #fff; }
+.steps b { font-size: 17px; }
+.steps span { color: var(--muted); }
+.stack { display: grid; gap: 14px; margin-top: 8px; }
+.stack label { display: grid; gap: 6px; font-weight: 600; font-size: 14px; color: #e9e9ee; }
+.stack .field { width: 100%; }
+textarea.field { resize: vertical; font: 500 16px/1.45 var(--text); }
+.stack .check { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; font-size: 13px; color: #c9c9d0; }
+.stack .check input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--gold); flex: none; }
+.stack .btn { justify-self: start; }
+.hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.form-error { background: #4a2525; color: #ffd2d2 !important; padding: 10px 14px; border-radius: 10px; }
+@media (max-width: 900px) { .wrap.help-page { grid-template-columns: 1fr; gap: 28px; padding-top: 36px; } }
+@media (max-width: 640px) { .wrap.help-page { padding: 28px 16px 48px; } }
+
+/* Подбор от вуза */
+.hero-alt { margin: 18px 0 0; font-weight: 600; }
+.hero-alt a { color: var(--gold-deep); }
+.kicker-dark { color: var(--gold-deep); font-weight: 700; font-size: 15px; margin: 0 0 6px; }
+.unis.big a { padding: 20px 16px 20px 0; }
+.unis.big a b { font-family: var(--display); font-weight: 600; font-size: 20px; margin-bottom: 2px; }
+.fit label.grow { flex: 1 1 360px; min-width: 0; }
+.fit label.grow select { width: 100%; }
+.route-results { margin: 0 0 24px; }
+.route-summary { font-size: 18px; margin: 0 0 6px; }
+.route-summary b { color: var(--gold-deep); }
+.route-item { display: grid; grid-template-columns: 1fr 190px; gap: 10px 24px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.route-item h3 a { text-decoration: none; }
+.route-item h3 a:hover { text-decoration: underline; }
+.route-side { display: grid; gap: 6px; align-content: start; justify-items: start; }
+.route-side .next { font-size: 14px; line-height: 1.35; }
+.route-side .next b { display: block; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--gold-deep); }
+details.more { display: contents; }
+details.more summary { list-style: none; cursor: pointer; padding: 4px 10px; border-radius: 999px; font-size: 14px; font-weight: 600;
+  border: 1px dashed var(--road); color: var(--muted); }
+details.more summary::-webkit-details-marker { display: none; }
+details.more[open] summary { display: none; }
+@media (max-width: 640px) {
+  .route-item { grid-template-columns: 1fr; }
+  .route-side { grid-auto-flow: column; justify-content: start; align-items: center; gap: 12px; }
+  .route-side .next b { display: inline; margin-right: 4px; }
+}
+
 @media (max-width: 900px) {
   .layout, .teaser { grid-template-columns: 1fr; gap: 0; }
   .teaser { gap: 20px; }

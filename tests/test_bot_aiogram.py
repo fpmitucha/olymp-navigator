@@ -142,9 +142,9 @@ class BotFlowTest(unittest.TestCase):
         # в тестовом перечне 2026/27: 1 ур. — Физтех, Ломоносов, «Архитектура и искусство»;
         # 2 ур. — НТО, ОММО; 3 ур. — НТО, ОММО
         self.assertEqual(labels, ["1️⃣ уровень · 3", "2️⃣ уровень · 2", "3️⃣ уровень · 2",
-                                  "🏆 ВсОШ", "🎓 Вузы", "🔔 Подписки", "ℹ️ Помощь"])
+                                  "🏆 ВсОШ", "🎓 Вузы", "🔔 Подписки", "🤝 Сопровождение", "ℹ️ Помощь"])
         rows = [len(row) for row in calls[0].reply_markup.inline_keyboard]
-        self.assertEqual(rows, [2, 2, 2, 1])
+        self.assertEqual(rows, [2, 2, 2, 2])
         self.assertEqual(self.storage.stats()["users"], 1)
 
     def test_olympiad_buttons_left_aligned(self):
@@ -325,6 +325,7 @@ class BotFlowTest(unittest.TestCase):
         self.assertTrue(next(c for c in stale if isinstance(c, AnswerCallbackQuery)).show_alert)
 
     def test_diploma_fit(self):
+        self.views_year = self.catalog.current_year
         card = self.sent(self.feed(self.message("Физтех")))[0]
         benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
         step = self.only_edit(self.feed(self.callback(self.button(benefits, "🎯 Подобрать"))))
@@ -333,14 +334,21 @@ class BotFlowTest(unittest.TestCase):
         self.assertIn("Ты победитель или призёр?", step.text)
         winner = self.only_edit(self.feed(self.callback(self.button(step, "🥇 Победитель"))))
         self.assertIn("За какой класс", winner.text)
-        result = self.only_edit(self.feed(self.callback(self.button(winner, "11 класс"))))
+        year = self.only_edit(self.feed(self.callback(self.button(winner, "11 класс"))))
+        # уровень математики Физтеха менялся (2 → 1) — бот спрашивает год диплома
+        self.assertIn("В каком году получен диплом", year.text)
+        result = self.only_edit(self.feed(self.callback(self.button(year, self.views_year))))
         self.assertIn("<b>Тестовый вуз</b>", result.text)
+        old = self.only_edit(self.feed(self.callback(self.button(year, "2024/25"))))
+        self.assertIn("уровень 2 в перечне 2024/25", old.text)
         self.assertIn("🏅 БВИ", result.text)
         self.assertIn("📄 Тестовый вуз", [label for label, _ in self.buttons(result)])
-        tenth = self.only_edit(self.feed(self.callback(self.button(winner, "10 класс"))))
+        tenth_year = self.only_edit(self.feed(self.callback(self.button(winner, "10 класс"))))
+        tenth = self.only_edit(self.feed(self.callback(self.button(tenth_year, self.views_year))))
         self.assertIn("Ни один из собранных вузов", tenth.text)  # в тестовом вузе — только за 11 класс
         prize = self.only_edit(self.feed(self.callback(self.button(step, "🥈 Призёр"))))
-        prize11 = self.only_edit(self.feed(self.callback(self.button(prize, "11 класс"))))
+        prize11_year = self.only_edit(self.feed(self.callback(self.button(prize, "11 класс"))))
+        prize11 = self.only_edit(self.feed(self.callback(self.button(prize11_year, self.views_year))))
         self.assertIn("💯 100 баллов ЕГЭ", prize11.text)
         self.assertNotIn("🏅 БВИ", prize11.text)
         back = self.only_edit(self.feed(self.callback(self.button(prize11, "🎓 К льготам"))))
@@ -362,6 +370,39 @@ class BotFlowTest(unittest.TestCase):
         self.assertTrue(docs[0].document.data.startswith(b"%PDF"))
         self.assertTrue(docs[0].document.filename.endswith(".pdf"))
         self.assertIn("Льготы", docs[0].caption)
+
+    def test_help_request(self):
+        import asyncio
+
+        from app.bot.notifier import forward_help_requests
+
+        menu = self.sent(self.feed(self.message("/start")))[0]
+        offer = self.only_edit(self.feed(self.callback(self.button(menu, "🤝 Сопровождение"))))
+        self.assertIn("Сопровождение до диплома", offer.text)
+        done = self.only_edit(self.feed(self.callback(self.button(offer, "✅ Оставить заявку"))))
+        self.assertIn("Заявка отправлена", done.text)
+        self.feed(self.callback(self.button(offer, "✅ Оставить заявку")))  # повторное нажатие — без дубля
+        again = self.only_edit(self.feed(self.callback(self.button(menu, "🤝 Сопровождение"))))
+        self.assertIn("Заявка уже у нас", again.text)
+        self.assertNotIn("✅ Оставить заявку", [label for label, _ in self.buttons(again)])
+        deep = self.sent(self.feed(self.message("/start help")))[0]
+        self.assertIn("Сопровождение до диплома", deep.text)
+
+        self.storage.add_diploma(USER_ID, self.catalog.search("Физтех")[0].olympiad.id, "математика", "prize",
+                                 11, "2025/26")
+        self.storage.subscribe_university(USER_ID, "МГУ")
+        outbox = []
+
+        async def send(chat_id, text):
+            outbox.append((chat_id, text))
+
+        self.assertEqual(asyncio.run(forward_help_requests(self.storage, self.catalog, send, 42)), 1)
+        chat_id, text = outbox[0]
+        self.assertEqual(chat_id, 42)
+        self.assertIn(f"tg://user?id={USER_ID}", text)
+        self.assertIn("Физтех", text)
+        self.assertIn("Вузы-цели:</b> МГУ", text)
+        self.assertEqual(asyncio.run(forward_help_requests(self.storage, self.catalog, send, 42)), 0)
 
     def test_login_deep_link(self):
         self.storage.create_login("tok123")

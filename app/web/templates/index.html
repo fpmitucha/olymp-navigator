@@ -19,6 +19,7 @@
         <button type="submit">Найти</button>
       </form>
       <p class="quick">{% for o in popular %}<a href="/olympiad/{{ o.id }}">{{ short(o) }}</a>{% endfor %}</p>
+      <p class="hero-alt">Знаешь вуз, но не олимпиаду? <a href="/route">Подбор от вуза →</a></p>
     </div>
   </div>
 </section>

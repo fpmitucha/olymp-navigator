@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS user_diploma (
     created_at    TEXT NOT NULL,
     UNIQUE (telegram_id, olympiad_id, profile, academic_year)
 );
+CREATE TABLE IF NOT EXISTS help_request (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id   INTEGER,                -- если человек вошёл на сайт или написал из бота
+    username      TEXT NOT NULL DEFAULT '',
+    name          TEXT NOT NULL DEFAULT '',
+    contact       TEXT NOT NULL DEFAULT '',
+    grade         INTEGER,
+    goal          TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL,          -- site | bot
+    created_at    TEXT NOT NULL,
+    forwarded_at  TEXT                    -- когда бот переслал заявку админу
+);
 CREATE TABLE IF NOT EXISTS meta (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
@@ -363,9 +375,47 @@ class Storage:
             "SELECT university FROM university_subscription WHERE telegram_id = ? ORDER BY created_at", (telegram_id,))
         return [r[0] for r in rows]
 
+    # -- заявки на сопровождение -------------------------------------------
+
+    def add_help_request(self, *, source: str, telegram_id: int | None = None, username: str = "", name: str = "",
+                         contact: str = "", grade: int | None = None, goal: str = "") -> int:
+        cur = self.conn.execute(
+            "INSERT INTO help_request (telegram_id, username, name, contact, grade, goal, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (telegram_id, username[:64], name[:100], contact[:200], grade, goal[:2000], source, _now()))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def recent_help_request(self, *, telegram_id: int | None = None, contact: str = "", hours: int = 24) -> bool:
+        """Была ли заявка за последние сутки — чтобы одну и ту же не слали десять раз."""
+        since = _ago(minutes=hours * 60)
+        if telegram_id:
+            row = self.conn.execute("SELECT 1 FROM help_request WHERE telegram_id = ? AND created_at >= ?",
+                                    (telegram_id, since)).fetchone()
+            if row:
+                return True
+        if contact:
+            row = self.conn.execute("SELECT 1 FROM help_request WHERE lower(contact) = lower(?) AND created_at >= ?",
+                                    (contact, since)).fetchone()
+            return row is not None
+        return False
+
+    def help_requests_since(self, minutes: int) -> int:
+        return self.conn.execute("SELECT count(*) FROM help_request WHERE created_at >= ?",
+                                 (_ago(minutes=minutes),)).fetchone()[0]
+
+    def pending_help_requests(self) -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM help_request WHERE forwarded_at IS NULL ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_help_forwarded(self, request_id: int) -> None:
+        self.conn.execute("UPDATE help_request SET forwarded_at = ? WHERE id = ?", (_now(), request_id))
+        self.conn.commit()
+
     def delete_user_data(self, telegram_id: int) -> None:
-        """«Удалить мои данные» в кабинете: профиль, дипломы, подписки, сессии."""
-        for table in ("user_diploma", "user_profile", "web_session", "subscription", "university_subscription"):
+        """«Удалить мои данные» в кабинете: профиль, дипломы, подписки, сессии, заявки."""
+        for table in ("user_diploma", "user_profile", "web_session", "subscription", "university_subscription",
+                      "help_request"):
             self.conn.execute(f"DELETE FROM {table} WHERE telegram_id = ?", (telegram_id,))  # noqa: S608
         self.conn.commit()
 

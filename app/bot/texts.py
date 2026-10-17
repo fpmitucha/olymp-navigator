@@ -678,6 +678,7 @@ def fit_question(o: CatalogOlympiad, step: str, profile: str | None = None, dipl
         "profile": "По какому профилю диплом?",
         "diploma": "Ты победитель или призёр?",
         "grade": "За какой класс диплом?",
+        "year": "В каком году получен диплом? Уровень олимпиады берётся из перечня того года.",
     }
     return f"{head}\n\n{questions[step]}"
 
@@ -780,3 +781,37 @@ def benefits_changed(u: UniversityBenefits, old_label: str, changes: list, focus
 REPORT_ERROR_HINT = ("📮 <b>Нашли ошибку?</b>\n\nНапиши одним сообщением, начав со слова «Ошибка»: какая олимпиада, "
                      "какой вуз и что указано неверно. Если есть ссылка на документ вуза — добавь её.\n\n"
                      "<i>Например: Ошибка. Высшая проба, ВШЭ: на «Экономику» БВИ дают и призёрам.</i>")
+
+
+# -- сопровождение --------------------------------------------------------------
+
+HELP_OFFER = (
+    "🤝 <b>Сопровождение до диплома</b>\n\n"
+    "Подберём олимпиады под твой вуз и направление, составим план на сезон, напомним о регистрации и каждом "
+    "этапе, подскажем, как готовиться, — вплоть до получения нужного диплома и поступления.\n\n"
+    "Оставь заявку — куратор напишет тебе в Telegram. Вместе с заявкой передадим твоё имя в Telegram, "
+    "а если ты заполнял «Мой путь» на сайте — класс, дипломы и вузы-цели."
+)
+HELP_SENT = "✅ Заявка отправлена! Куратор напишет тебе в Telegram — обычно в течение дня."
+HELP_ALREADY = "Заявка уже у нас — куратор скоро напишет. Если что-то срочное, просто ответь здесь."
+
+
+def help_request_admin(req: dict, about: list[str]) -> str:
+    """Сообщение администратору о новой заявке на сопровождение."""
+    source = {"site": "с сайта", "bot": "из бота"}.get(req["source"], req["source"])
+    lines = [f"🤝 <b>Заявка на сопровождение #{req['id']}</b> ({source})", ""]
+    who = escape(req["name"]) if req["name"] else "без имени"
+    if req["telegram_id"]:
+        who = f'<a href="tg://user?id={int(req["telegram_id"])}">{who}</a>'
+    if req["username"]:
+        who += f" @{escape(req['username'])}"
+    lines.append(f"Кто: {who}")
+    if req["contact"]:
+        lines.append(f"Контакт: {escape(req['contact'])}")
+    if req["grade"]:
+        lines.append(f"Класс: {int(req['grade'])}")
+    if req["goal"]:
+        lines += ["", "<b>Цель:</b>", escape(req["goal"][:1500])]
+    if about:
+        lines += [""] + about
+    return "\n".join(lines)

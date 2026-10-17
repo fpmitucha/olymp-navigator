@@ -57,7 +57,8 @@
     {% for u, best in targets %}
     <div class="diploma">
       <div><h3 style="margin:0"><a href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a></h3>
-        <span class="small">{{ status(u, admission_year) }}{% if best %} · лучшее по твоим дипломам: {{ badge(best) }}{% endif %}</span></div>
+        <span class="small">{{ status(u, admission_year) }}{% if best %} · лучшее по твоим дипломам: {{ badge(best) }}{% endif %}
+          · <a href="/route/{{ uni_slug[u.university] }}">какие олимпиады ведут сюда</a></span></div>
       {{ follow('/me/universities/' ~ uni_slug[u.university], true, 'Убрать', 'Добавить') }}
     </div>
     {% else %}

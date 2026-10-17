@@ -297,3 +297,67 @@ async def benefits_updates_loop(storage: Storage, catalog: Catalog, benefits, se
         await send_benefits_updates(storage, catalog, benefits, send, admin_id)
     except Exception:  # noqa: BLE001
         log.exception("Сбой рассылки об изменениях льгот")
+
+
+# -- заявки на сопровождение ------------------------------------------------------
+
+def about_user(storage: Storage, catalog: Catalog, telegram_id: int | None) -> list[str]:
+    """Что известно о человеке из «Моего пути»: класс, дипломы, вузы-цели, олимпиады."""
+    if not telegram_id:
+        return []
+    lines = []
+    profile = storage.profile(telegram_id)
+    if profile.get("grade"):
+        lines.append(f"Класс (в кабинете): {profile['grade']}")
+    diplomas = storage.diplomas(telegram_id)
+    if diplomas:
+        lines.append("<b>Дипломы:</b>")
+        for d in diplomas:
+            o = catalog.get(d["olympiad_id"])
+            name = texts.short_name(o.name, 50) if o else d["olympiad_id"]
+            lines.append(f"• {texts.escape(name)}, {texts.escape(d['profile'])} — "
+                         f"{texts.DIPLOMA_TITLES.get(d['diploma'], d['diploma'])}, {d['academic_year']}")
+    targets = storage.university_subscriptions(telegram_id)
+    if targets:
+        lines.append("<b>Вузы-цели:</b> " + texts.escape(", ".join(targets)))
+    olympiads = [catalog.get(x) for x in storage.subscriptions(telegram_id)]
+    names = [texts.short_name(o.name, 40) for o in olympiads if o]
+    if names:
+        lines.append("<b>Следит за:</b> " + texts.escape(", ".join(names[:10]))
+                     + (f" и ещё {len(names) - 10}" if len(names) > 10 else ""))
+    return lines
+
+
+async def forward_help_requests(storage: Storage, catalog: Catalog, send: SendFn, admin_id: int) -> int:
+    """Пересылает администратору новые заявки (с сайта и из бота). Возвращает число пересланных."""
+    if not admin_id:
+        return 0
+    sent = 0
+    for req in storage.pending_help_requests():
+        try:
+            await send(admin_id, texts.help_request_admin(req, about_user(storage, catalog, req["telegram_id"])))
+            sent += 1
+        except TemporaryError:
+            break  # сеть — попробуем в следующий проход
+        except Exception:  # noqa: BLE001 — сломанная заявка не должна блокировать остальные
+            log.exception("Не переслалась заявка на сопровождение #%s", req["id"])
+        storage.mark_help_forwarded(req["id"])
+        await asyncio.sleep(SEND_PAUSE)
+    return sent
+
+
+async def help_requests_loop(db_path: str, catalog: Catalog, send: SendFn, admin_id: int,
+                             interval: float = 60) -> None:
+    """Заявки с сайта попадают в общую базу — раз в минуту пересылаем новые администратору."""
+    if not admin_id:
+        log.warning("BOT_ADMIN_ID не задан — заявки на сопровождение и сообщения об ошибках копятся в базе")
+        return
+    while True:
+        storage = Storage(db_path)
+        try:
+            await forward_help_requests(storage, catalog, send, admin_id)
+        except Exception:  # noqa: BLE001
+            log.exception("Сбой пересылки заявок на сопровождение")
+        finally:
+            storage.close()
+        await asyncio.sleep(interval)

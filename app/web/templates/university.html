@@ -9,6 +9,7 @@
     <p class="muted">{{ u.full_name }} · {{ status(u, admission_year) }}</p>
     <div class="head-actions">
       {{ follow('/me/universities/' ~ u_slug, following, '✓ Это моя цель', '★ Добавить в цели') }}
+      <a class="btn small" href="/route/{{ u_slug }}">Какие олимпиады ведут сюда →</a>
       <a class="btn small ghost" href="{{ u.source_url }}" rel="nofollow noopener">Документ вуза</a>
     </div>
   </div>
