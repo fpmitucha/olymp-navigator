@@ -110,6 +110,510 @@ def _catalog():
         raise SystemExit(str(exc)) from exc
 
 
+def _benefits(catalog, strict: bool = True):
+    from app.benefits import BenefitsCatalog, BenefitsError, load_benefits
+    from app.config import PROJECT_ROOT
+
+    try:
+        return load_benefits(PROJECT_ROOT / "benefits", catalog)
+    except BenefitsError as exc:
+        if strict:
+            raise SystemExit(f"Ошибки в файлах льгот:\n{exc}") from exc
+        print(f"⚠️ Льготы не загружены, ошибки в файлах benefits/:\n{exc}", file=sys.stderr)
+        return BenefitsCatalog()
+
+
+def cmd_benefits_check(args: argparse.Namespace) -> int:
+    catalog = _catalog()
+    benefits = _benefits(catalog)
+    for u in benefits.universities:
+        from collections import Counter
+
+        from app.benefits import BENEFIT_TYPES
+
+        counts = Counter(r.benefit for r in u.rules)
+        kinds = ", ".join(f"{BENEFIT_TYPES[k]} {counts[k]}" for k in BENEFIT_TYPES if counts[k])
+        print(f"✓ {u.file}: {u.university}, приём {u.admission_year}, {u.document_status}, "
+              f"правил {len(u.rules)} ({kinds})")
+    return 0
+
+
+def cmd_benefits_import_hse(args: argparse.Namespace) -> int:
+    import json
+    import re
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.hse_benefits import parse_hse_table
+
+    source = args.source
+    if source.startswith("http"):
+        from app.fetch import fetch_bytes
+
+        data = fetch_bytes(source)
+    else:
+        data = Path(source).read_bytes()
+    table = parse_hse_table(data)
+    catalog = _catalog()
+    rules, problems = resolve_import(table.rules, catalog)
+    year = int(m.group(1)) if (m := re.search(r"в (20\d\d) году", table.title)) else args.year
+    doc = {
+        "university": args.name,
+        "full_name": "Национальный исследовательский университет «Высшая школа экономики»"
+                     + (f" — {args.campus}" if args.campus and args.campus != "Москва" else ""),
+        "city": args.campus or "Москва",
+        "admission_year": year,
+        "document_status": "approved",
+        "source_url": args.page,
+        "source_title": table.title or "Особые права при приёме в НИУ ВШЭ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Льгота действует, если в год написания олимпиада и её профиль входили в перечень Минобрнауки.",
+            "Минимальный балл ЕГЭ для подтверждения — не ниже указанного в правиле (обычно 75).",
+        ] + ([f"Ещё {table.skipped_generic} правил «для всех олимпиад перечня» (гуманитарные программы) "
+              "пока не показаны — смотрите таблицу ВШЭ."] if table.skipped_generic else []),
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)  # та же проверка, что при загрузке бота
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок таблицы: {table.rows}, программ: {table.programs}, правил: {len(table.rules)}, "
+          f"сохранено: {len(rules)}, пропущено общих: {table.skipped_generic}")
+    print(f"Записано: {args.out}")
+    if problems:
+        print(f"\nНе сопоставлено ({len(problems)}) — эти правила не сохранены:")
+        for p in problems:
+            print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_msu(args: argparse.Namespace) -> int:
+    import json
+    import re
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.msu_benefits import parse_msu_pdf
+
+    table = parse_msu_pdf(args.source)
+    catalog = _catalog()
+    rsr_year = m.group(1) if (m := re.search(r"на (20\d\d/\d\d) учебный год", table.title)) else args.rsr_year
+    rules, problems = resolve_import([{**r, "rsr_year": rsr_year} if r["olympiad"] == "*" else r
+                                      for r in table.rules], catalog)
+    year = int(m.group(1)) if (m := re.search(r"в (20\d\d) году", table.title)) else args.year
+    doc = {
+        "university": "МГУ",
+        "full_name": "Московский государственный университет имени М.В. Ломоносова",
+        "city": "Москва",
+        "admission_year": year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": table.title or "Особые права победителям и призёрам олимпиад, МГУ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Льгота — по профилю олимпиады; ЕГЭ по предмету подтверждения не ниже 75 баллов.",
+            "«100 баллов за ДВИ» — максимальный балл за дополнительное вступительное испытание МГУ.",
+            f"«Любая олимпиада перечня» — по перечню {rsr_year} учебного года.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nфакультетов: {table.faculties}, строк: {table.rows}, правил: {len(table.rules)}, "
+          f"сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_mephi(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.mephi_benefits import parse_mephi_html, resolve_numbers
+
+    if args.source.startswith("http"):
+        from app.fetch import fetch_html
+
+        html = fetch_html(args.source)
+    else:
+        html = Path(args.source).read_text(encoding="utf-8")
+    table = parse_mephi_html(html)
+    catalog = _catalog()
+    rules, problems = resolve_import(resolve_numbers(table.rules, catalog, args.rsr_year), catalog)
+    doc = {
+        "university": "МИФИ",
+        "full_name": "Национальный исследовательский ядерный университет «МИФИ»",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.source if args.source.startswith("http") else args.url,
+        "source_title": table.title or "Особые права победителей и призёров олимпиад, НИЯУ МИФИ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Льготы победителям и призёрам; ЕГЭ или экзамен МИФИ от 75 по предмету олимпиады.",
+            "БВИ — за дипломы 10–11 класса, 100 баллов — за дипломы 8–11 класса.",
+            "Кто не использовал право на БВИ, может засчитать 100 баллов по предмету олимпиады.",
+            "Направления указаны кодами (01.03.02 и т. п.) — названия в правилах приёма МИФИ.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Пропущено", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_spbu(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.spbu_benefits import parse_spbu_pdf
+
+    table = parse_spbu_pdf(args.source)
+    catalog = _catalog()
+    rules, problems = resolve_import([{**r, "rsr_year": args.rsr_year} if r["olympiad"] == "*" else r
+                                      for r in table.rules], catalog)
+    doc = {
+        "university": "СПбГУ",
+        "full_name": "Санкт-Петербургский государственный университет",
+        "city": "Санкт-Петербург",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": table.title or "Особые права при приёме в СПбГУ",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Засчитываются дипломы только за 10 и 11 класс; право действует 4 года после олимпиады.",
+            "Нужен результат ВИ (ЕГЭ) не ниже указанного в правиле минимального балла.",
+            f"«Любая олимпиада перечня» — по перечню {args.rsr_year} учебного года.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_itmo(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.itmo_benefits import build_joiner, parse_rsosh_rows, parse_vsosh_rows, read_pdf_rows
+
+    catalog = _catalog()
+    files = {"bvi": args.bvi, "score100": args.score100, "vsosh": args.vsosh}
+    loaded = {k: read_pdf_rows(v) for k, v in files.items() if v}
+    join = build_joiner([text for _, text in loaded.values()], catalog)
+    imports = []
+    for kind in ("bvi", "score100"):
+        if kind in loaded:
+            imports.append(parse_rsosh_rows(loaded[kind][0], kind, join))
+    if "vsosh" in loaded:
+        vsosh = next(o for o in catalog.olympiads.values() if o.is_vsosh)
+        imports.append(parse_vsosh_rows(loaded["vsosh"][0], join, sorted(vsosh.profiles)))
+    raw = [r for imp in imports for r in imp.rules]
+    rules, problems = resolve_import([{**r, "rsr_year": args.rsr_year} if r["olympiad"] == "*" else r
+                                      for r in raw], catalog)
+    doc = {
+        "university": "ИТМО",
+        "full_name": "Национальный исследовательский университет ИТМО",
+        "city": "Санкт-Петербург",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": "https://abit.itmo.ru/bachelor",
+        "source_title": f"Учёт дипломов олимпиад РСОШ и ВсОШ при поступлении в ИТМО в {args.year} году",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Засчитываются дипломы РСОШ за 10 и 11 класс; ЕГЭ по предмету подтверждения — от 75 баллов.",
+            "100 баллов дают олимпиады, которые не дают БВИ на это направление.",
+            f"«Любая олимпиада перечня» — по перечню {args.rsr_year} учебного года.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"строк: {sum(i.rows for i in imports)}, правил: {len(raw)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    warnings = [w for i in imports for w in i.warnings]
+    for title, items in (("Не разобрано", warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_sechenov(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.sechenov_benefits import parse_sechenov_pdf
+
+    table = parse_sechenov_pdf(args.source)
+    catalog = _catalog()
+    rules, problems = resolve_import(table.rules, catalog)
+    doc = {
+        "university": "Сеченовский",
+        "full_name": "Первый МГМУ имени И.М. Сеченова (Сеченовский Университет)",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": table.title or "Перечень олимпиад школьников, Сеченовский Университет",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "БВИ по олимпиадам школьников Сеченовский не даёт — только 100 баллов по предмету профиля.",
+            "Дипломы за 10 или 11 класс; ЕГЭ или внутреннее испытание по предмету подтверждения — от 75 баллов.",
+            "100 баллов засчитываются на всех направлениях, где есть это вступительное испытание.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"{table.title}\nстрок: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_reu(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.mephi_benefits import resolve_numbers
+    from app.parsers.reu_benefits import parse_reu_pdf
+
+    table = parse_reu_pdf(args.source)
+    catalog = _catalog()
+    rsr_year = table.year.replace("/20", "/") if table.year else args.rsr_year  # 2025/2026 → 2025/26
+    rules, problems = resolve_import(resolve_numbers(table.rules, catalog, rsr_year), catalog)
+    doc = {
+        "university": "РЭУ",
+        "full_name": "Российский экономический университет имени Г.В. Плеханова",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": f"Приложение 11 к Правилам приёма РЭУ им. Г.В. Плеханова в {args.year}/{(args.year + 1) % 100} "
+                        "учебном году: перечень олимпиад и льгот",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            f"Условия для дипломов {table.year} учебного года; для дипломов прошлых лет в документе РЭУ "
+            "отдельные таблицы — условия могут отличаться.",
+            "Победителям и призёрам; для олимпиад РСОШ — ЕГЭ по подтверждающему предмету от 75 баллов.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"раздел {table.year}: строк {table.rows}, правил {len(table.rules)}, сохранено {len(rules)}")
+    print(f"Записано: {args.out}")
+    for title, items in (("Не разобрано", table.warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_ranepa(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers import ranepa_benefits as ranepa
+
+    catalog = _catalog()
+    vsosh = next(o for o in catalog.olympiads.values() if o.is_vsosh)
+    imports = [
+        ranepa.parse_bvi_xlsx(Path(args.bvi).read_bytes()),
+        ranepa.parse_100_rows(ranepa.read_pdf_rows(args.score100)),
+        ranepa.parse_vsosh_rows(ranepa.read_pdf_rows(args.vsosh), sorted(vsosh.profiles)),
+    ]
+    raw = [r for i in imports for r in i.rules]
+    rules, problems = resolve_import(raw, catalog)
+    doc = {
+        "university": "РАНХиГС",
+        "full_name": "Российская академия народного хозяйства и государственной службы при Президенте РФ",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": "https://www.ranepa.ru/bakalavriat/olimpiady/",
+        "source_title": f"Поступление по олимпиаде — РАНХиГС, приём {args.year} (московский кампус)",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "БВИ — победителям и призёрам олимпиад РСОШ за 10–11 класс, ЕГЭ по профильному предмету от 75.",
+            "100 баллов — только за дипломы 11 класса; право можно использовать на нескольких программах.",
+            "ВсОШ (9–11 класс) — без условия по ЕГЭ. Данные по московскому кампусу; у филиалов свои списки.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"строк: {sum(i.rows for i in imports)}, правил: {len(raw)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    warnings = [w for i in imports for w in i.warnings]
+    for title, items in (("Не разобрано", warnings), ("Не сопоставлено", problems)):
+        if items:
+            print(f"\n{title} ({len(items)}):")
+            for p in items:
+                print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_import_fa(args: argparse.Namespace) -> int:
+    import json
+    from datetime import date
+
+    from app.benefits import parse_file, resolve_import
+    from app.parsers.fa_benefits import parse_fa_pdf
+
+    table = parse_fa_pdf(args.source)
+    catalog = _catalog()
+    rules, problems = resolve_import(table.rules, catalog)
+    doc = {
+        "university": "Финуниверситет",
+        "full_name": "Финансовый университет при Правительстве Российской Федерации",
+        "city": "Москва",
+        "admission_year": args.year,
+        "document_status": "approved",
+        "source_url": args.url,
+        "source_title": "Перечень олимпиад школьников за 10, 11 класс для предоставления особых прав "
+                        f"в Финансовый университет в {args.year}/{(args.year + 1) % 100} учебном году",
+        "checked_at": date.today().isoformat(),
+        "notes": [
+            "Победителям и призёрам за 10–11 класс; ЕГЭ по предмету подтверждения — от 75 баллов.",
+            "Уровень олимпиады и то, засчитывается ли диплом, зависят от года диплома — см. примечание к правилу.",
+            "Льготы даются на «группу образовательных программ»; состав групп — в правилах приёма Финуниверситета.",
+        ],
+        "defaults": {},
+        "rules": rules,
+    }
+    parse_file(doc, catalog, args.out)
+    Path(args.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"строк: {table.rows}, правил: {len(table.rules)}, сохранено: {len(rules)}")
+    print(f"Записано: {args.out}")
+    if problems:
+        print(f"\nНе сопоставлено ({len(problems)}):")
+        for p in problems:
+            print(f"  ? {p}")
+    return 0
+
+
+def cmd_benefits_watch(args: argparse.Namespace) -> int:
+    from app.benefits_watch import load_sources, run_watch
+    from app.bot.storage import Storage
+    from app.config import PROJECT_ROOT
+    from app.fetch import fetch_bytes, fetch_html
+
+    catalog = _catalog()
+    year = args.year or int(catalog.current_year[:4]) + 1
+    storage = Storage(settings.bot_db_path)
+    try:
+        report = run_watch(storage, load_sources(PROJECT_ROOT / "benefits" / "watch" / "sources.json"),
+                           year, fetch_html, fetch_bytes)
+    finally:
+        storage.close()
+    if report.baseline:
+        print(f"Первый запуск: запомнил, что сейчас на страницах вузов. Дальше буду сообщать о новом (приём {year}).")
+    for f in report.findings:
+        print(f"★ {f.university}: {f.title}\n    {f.url}")
+    if not report.findings and not report.baseline:
+        print(f"Новых документов о приёме {year} нет.")
+    for e in report.errors:
+        print(f"  ? не открылось: {e}")
+    return 0
+
+
+def cmd_benefits_pdf(args: argparse.Namespace) -> int:
+    from app.export_pdf import benefits_pdf, pdf_filename
+
+    catalog = _catalog()
+    benefits = _benefits(catalog)
+    hits = catalog.search(args.olympiad, limit=1)
+    if not hits:
+        raise SystemExit(f"Олимпиада «{args.olympiad}» не найдена")
+    o = hits[0].olympiad
+    entries = [(u, [r for r in rules if not args.profile or not r.profiles or args.profile in r.profiles])
+               for u, rules in benefits.for_olympiad(o.id)]
+    entries = [(u, rules) for u, rules in entries if rules]
+    admission_year = int(catalog.current_year[:4]) + 1
+    subtitle = f"Профиль «{args.profile}» · все вузы" if args.profile else ""
+    out = Path(args.out or pdf_filename(o, args.profile or ""))
+    out.write_bytes(benefits_pdf(o, entries, admission_year, subtitle=subtitle))
+    print(f"{o.name}: вузов {len(entries)}, правил {sum(len(r) for _, r in entries)} → {out}")
+    return 0
+
+
+def cmd_benefits_diff(args: argparse.Namespace) -> int:
+    import json
+    import re
+
+    from app.benefits import parse_file
+    from app.benefits_diff import diff_universities, summarize
+
+    catalog = _catalog()
+    old = parse_file(json.loads(Path(args.old).read_text(encoding="utf-8")), catalog, args.old)
+    new = parse_file(json.loads(Path(args.new).read_text(encoding="utf-8")), catalog, args.new)
+    changes = diff_universities(old, new)
+    print(f"{new.university}: приём {old.admission_year} ({old.document_status}) → "
+          f"{new.admission_year} ({new.document_status}), изменений: {len(changes)}\n")
+    for line in summarize(changes, limit=args.limit):
+        print(re.sub(r"<[^>]+>", "", line))
+    return 0
+
+
+def cmd_web_run(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from app.web.main import create_app
+    except ImportError as exc:
+        print(f"Не установлены зависимости сайта ({exc}). Выполните: py -m pip install -r requirements.txt",
+              file=sys.stderr)
+        return 1
+    catalog = _catalog()
+    app = create_app(catalog, _benefits(catalog, strict=False), storage_path=settings.bot_db_path,
+                     secret=settings.web_secret)
+    print(f"Сайт: http://{args.host}:{args.port}  (остановка — Ctrl+C)")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
 def cmd_bot_run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -127,12 +631,15 @@ def cmd_bot_run(args: argparse.Namespace) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     catalog = _catalog()
+    benefits = _benefits(catalog, strict=False)
     storage = Storage(settings.bot_db_path)
-    print(f"Каталог: {len(catalog.olympiads)} олимпиад, годы {', '.join(catalog.years)}. База бота: {settings.bot_db_path}")
+    print(f"Каталог: {len(catalog.olympiads)} олимпиад, годы {', '.join(catalog.years)}. "
+          f"Льготы: {len(benefits.latest())} вузов. База бота: {settings.bot_db_path}")
     print("Бот запущен, остановка — Ctrl+C")
     try:
         asyncio.run(run(token, catalog, storage, proxy=settings.telegram_proxy,
-                        force_ipv4=settings.telegram_force_ipv4, stages_autosync=settings.stages_autosync))
+                        force_ipv4=settings.telegram_force_ipv4, stages_autosync=settings.stages_autosync,
+                        benefits=benefits))
     except KeyboardInterrupt:
         pass
     finally:
@@ -272,6 +779,95 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_bot_run)
     p = bot.add_parser("check", help="проверить связь с Telegram")
     p.set_defaults(func=cmd_bot_check)
+
+    ben = groups.add_parser("benefits", help="льготы вузов").add_subparsers(dest="command", required=True)
+    p = ben.add_parser("check", help="проверить файлы benefits/*.json")
+    p.set_defaults(func=cmd_benefits_check)
+    p = ben.add_parser("import-hse", help="импорт таблицы особых прав ВШЭ (xlsx: ссылка или файл)")
+    p.add_argument("source")
+    p.add_argument("--out", required=True, help="куда записать, например benefits/hse_moscow_2026.json")
+    p.add_argument("--name", default="ВШЭ", help="короткое имя в боте (ВШЭ, ВШЭ — СПб, …)")
+    p.add_argument("--campus", default="Москва")
+    p.add_argument("--year", type=int, default=2026, help="год приёма, если его нет в заголовке таблицы")
+    p.add_argument("--page", default="https://www.hse.ru/docs/1130197982.html", help="страница документа")
+    p.set_defaults(func=cmd_benefits_import_hse)
+    p = ben.add_parser("import-msu", help="импорт PDF особых прав МГУ (нужен pdfplumber)")
+    p.add_argument("source", help="путь к olymp_benefits.pdf")
+    p.add_argument("--out", required=True, help="например benefits/msu_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26", help="учебный год перечня для «*»")
+    p.add_argument("--url", default="https://cpk.msu.ru/files/2026/olymp_benefits.pdf")
+    p.set_defaults(func=cmd_benefits_import_msu)
+    p = ben.add_parser("import-spbu", help="импорт PDF особых прав СПбГУ (нужен pdfplumber)")
+    p.add_argument("source", help="путь к bac_spec_olymp_2_<год>.pdf")
+    p.add_argument("--out", default="benefits/spbu_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.add_argument("--url", default="https://abiturient.spbu.ru/medialibrary/ru/2026/bac/bac_spec_olymp_2_2026.pdf")
+    p.set_defaults(func=cmd_benefits_import_spbu)
+    p = ben.add_parser("import-itmo", help="импорт PDF особых прав ИТМО (нужен pdfplumber)")
+    p.add_argument("--bvi", default="data/itmo_rsosh_bvi_2026.pdf")
+    p.add_argument("--score100", default="data/itmo_rsosh_100_2026.pdf")
+    p.add_argument("--vsosh", default="data/itmo_vsosh_2026.pdf")
+    p.add_argument("--out", default="benefits/itmo_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.set_defaults(func=cmd_benefits_import_itmo)
+    p = ben.add_parser("import-sechenov", help="импорт PDF перечня олимпиад Сеченовского (нужен pdfplumber)")
+    p.add_argument("source", nargs="?", default="data/sechenov_olymp.pdf")
+    p.add_argument("--out", default="benefits/sechenov_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--url", default="https://www.sechenov.ru/upload/iblock/4f9/rqcqaakaep5gyyfvivy0mba980kmvrwm/"
+                                    "Pravila-priema_2026_2027_BS_pril5_Perechen-olimpiad.pdf")
+    p.set_defaults(func=cmd_benefits_import_sechenov)
+    p = ben.add_parser("import-reu", help="импорт PDF (приложение 11) особых прав РЭУ (нужен pdfplumber)")
+    p.add_argument("source", nargs="?", default="data/reu_pril11.pdf")
+    p.add_argument("--out", default="benefits/reu_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.add_argument("--url", default="https://www.rea.ru/mnt/sveden/document/priemDocLink/03_bak_Pravila_priema_pril_11.pdf")
+    p.set_defaults(func=cmd_benefits_import_reu)
+    p = ben.add_parser("import-ranepa", help="импорт документов РАНХиГС: xlsx БВИ + PDF 100 баллов и ВсОШ")
+    p.add_argument("--bvi", default="data/ranepa_bvi_2026.xlsx")
+    p.add_argument("--score100", default="data/ranepa_100_2026.pdf")
+    p.add_argument("--vsosh", default="data/ranepa_vsosh_2026.pdf")
+    p.add_argument("--out", default="benefits/ranepa_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.set_defaults(func=cmd_benefits_import_ranepa)
+    p = ben.add_parser("import-fa", help="импорт PDF перечня олимпиад Финуниверситета (нужен pdfplumber)")
+    p.add_argument("source", nargs="?", default="data/fa_olymp_2026.pdf")
+    p.add_argument("--out", default="benefits/fa_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--url", default="https://www.fa.ru/upload/constructor/918/oxs36ll62co031uhysc4la3e86r9numg/"
+                                    "Perechen-olimpiad-shkolnikov-2026.pdf")
+    p.set_defaults(func=cmd_benefits_import_fa)
+    p = ben.add_parser("diff", help="что изменилось между двумя файлами льгот вуза (например, 2026 → 2027)")
+    p.add_argument("old")
+    p.add_argument("new")
+    p.add_argument("--limit", type=int, default=30, help="сколько строк показывать в каждом разделе")
+    p.set_defaults(func=cmd_benefits_diff)
+    p = ben.add_parser("pdf", help="PDF со льготами олимпиады (как в боте)")
+    p.add_argument("olympiad", help="название или часть названия")
+    p.add_argument("--profile", default="", help="профиль, например «математика»")
+    p.add_argument("--out", default="")
+    p.set_defaults(func=cmd_benefits_pdf)
+    p = ben.add_parser("watch", help="проверить страницы приёма вузов: не вышли ли льготы на следующий год")
+    p.add_argument("--year", type=int, default=0, help="год приёма (по умолчанию — ближайший)")
+    p.set_defaults(func=cmd_benefits_watch)
+    mephi_url = "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners"
+    p = ben.add_parser("import-mephi", help="импорт таблицы особых прав МИФИ (страница или сохранённый html)")
+    p.add_argument("source", nargs="?", default=mephi_url)
+    p.add_argument("--out", default="benefits/mephi_2026.json")
+    p.add_argument("--year", type=int, default=2026)
+    p.add_argument("--rsr-year", default="2025/26")
+    p.add_argument("--url", default=mephi_url)
+    p.set_defaults(func=cmd_benefits_import_mephi)
+
+    web = groups.add_parser("web", help="сайт").add_subparsers(dest="command", required=True)
+    p = web.add_parser("run", help="запустить сайт локально")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=cmd_web_run)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")

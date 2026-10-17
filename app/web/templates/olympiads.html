@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_macros.html" import plural %}
+{% block title %}{% if q %}«{{ q }}» — поиск олимпиад{% else %}Олимпиады перечня {{ current_year }}{% endif %} · Бвишечка{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="page-head">
+    <h1>{% if q %}Поиск: «{{ q }}»{% else %}Олимпиады перечня {{ current_year }}{% endif %}</h1>
+    <form class="search" action="/olympiads" method="get" role="search">
+      <input name="q" value="{{ q }}" placeholder="Название, предмет или профиль" aria-label="Олимпиада">
+      <button type="submit">Найти</button>
+    </form>
+    {% if not q %}
+    <nav class="filters" aria-label="Уровень">
+      <a class="chip" href="/olympiads" {% if not level %}aria-current="true"{% endif %}>Все</a>
+      {% for lv in [1, 2, 3] %}<a class="chip" href="/olympiads?level={{ lv }}" {% if level == lv %}aria-current="true"{% endif %}>{{ lv }} уровень</a>{% endfor %}
+    </nav>
+    {% endif %}
+  </div>
+  {% if rows %}
+  <ul class="list">
+    {% for o, matched, best, unis in rows %}
+    <li>
+      <a class="title" href="/olympiad/{{ o.id }}">{{ short(o) }}</a>
+      <span class="meta">{% if matched %}{{ matched|join(', ') }}{% else %}{{ o.profiles_in(current_year)|list|sort|join(', ') or 'нет в перечне ' ~ current_year }}{% endif %}</span>
+      <span class="side">{% if best %}<span class="level">{{ best }} ур.</span>{% endif %}
+        {% if unis %}<br>льготы в {{ plural(unis, 'вузе', 'вузах', 'вузах') }}{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Ничего не нашли. Попробуй короче: «Ломоносов», «физика», «Физтех».</p>
+  {% endif %}
+  <div style="height:64px"></div>
+</div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{
+ "_comment": "Где ждать документы об особых правах на следующий приём. {year} — год приёма (2027). page — страница, на которой ищем новые ссылки с годом и словами про олимпиады/особые права; probe — адрес файла, который появится по шаблону прошлого года; hash — документ по постоянному адресу, следим за изменением содержимого; marker — текст, который появится на странице.",
+ "sources": [
+  {"university": "МФТИ", "page": "https://pk.mipt.ru/bachelor/", "probe": ["https://pk.mipt.ru/bachelor/{year}_olympiads/"]},
+  {"university": "МГУ", "page": "https://cpk.msu.ru/", "probe": ["https://cpk.msu.ru/files/{year}/olymp_benefits.pdf"]},
+  {"university": "СПбГУ", "page": "https://abiturient.spbu.ru/programs/bakalavriat/",
+   "probe": ["https://abiturient.spbu.ru/medialibrary/ru/{year}/bac/bac_spec_olymp_2_{year}.pdf"]},
+  {"university": "ИТМО", "page": "https://abit.itmo.ru/bachelor",
+   "probe": ["https://abit.itmo.ru/file_storage/file/pages/82/rsosh_bvi_{year}.pdf",
+             "https://abit.itmo.ru/file_storage/file/pages/82/rsosh_100_{year}.pdf"]},
+  {"university": "МИФИ", "page": "https://admission.mephi.ru/admission/baccalaureate-and-specialty/specials/winners",
+   "marker": "поступающих в НИЯУ МИФИ в {year} году"},
+  {"university": "РАНХиГС", "page": "https://www.ranepa.ru/bakalavriat/olimpiady/"},
+  {"university": "РЭУ", "hash": ["https://www.rea.ru/mnt/sveden/document/priemDocLink/03_bak_Pravila_priema_pril_11.pdf"]},
+  {"university": "Финуниверситет", "page": "https://www.fa.ru/for-applicants/olympiads/uchet/"},
+  {"university": "ВШЭ", "page": "https://ba.hse.ru/"},
+  {"university": "МГИМО", "page": "https://mgimo.ru/abiturient/"}
+ ]
+}

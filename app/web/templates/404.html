@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Не найдено · Бвишечка{% endblock %}
+{% block main %}
+<div class="wrap"><div class="page-head" style="min-height:50vh">
+  <h1>{{ detail }}</h1>
+  <p class="muted">Возможно, ссылка устарела. Найди олимпиаду заново:</p>
+  <form class="search" action="/olympiads" method="get" role="search">
+    <input name="q" placeholder="Название, предмет или профиль" aria-label="Олимпиада"><button type="submit">Найти</button>
+  </form>
+</div></div>
+{% endblock %}

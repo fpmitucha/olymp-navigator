@@ -24,6 +24,7 @@ from typing import Callable
 
 from app.bot.storage import Storage
 from app.catalog import Catalog, CatalogOlympiad, normalize
+from app.fetch import PageGone
 from app.parsers.olimpiada import ACTIVITY_URL, SITEMAP_URL, Activity, parse_activity, parse_sitemap
 from app.stages import StageRow
 
@@ -140,6 +141,7 @@ class _Crawler:
     def __init__(self, fetch: Fetch, today: date, report: SyncReport):
         self.fetch, self.today, self.report = fetch, today, report
         self.cache: dict[int, Activity | None] = {}
+        self.gone: set[int] = set()
 
     def get(self, activity_id: int) -> Activity | None:
         if activity_id not in self.cache:
@@ -147,6 +149,11 @@ class _Crawler:
             try:
                 self.cache[activity_id] = parse_activity(
                     self.fetch(ACTIVITY_URL.format(id=activity_id)), activity_id, self.today)
+            except PageGone:
+                # страницу удалили с сайта — это не сбой: просто больше не следим за ней
+                log.debug("olimpiada.ru/activity/%s удалена", activity_id)
+                self.gone.add(activity_id)
+                self.cache[activity_id] = None
             except Exception as exc:  # noqa: BLE001 — одна сломанная страница не останавливает обход
                 self.report.errors.append(f"activity/{activity_id}: {exc}")
                 log.warning("Не удалось загрузить olimpiada.ru/activity/%s: %s", activity_id, exc)
@@ -217,7 +224,7 @@ def sync_stages(
     if limit:
         relevant = set(sorted(relevant)[:limit])
     # Страница не загрузилась (таймаут, сбой сайта) — не считаем, что она выбыла из перечня
-    failed = {aid for aid, a in crawler.cache.items() if a is None}
+    failed = {aid for aid, a in crawler.cache.items() if a is None and aid not in crawler.gone}
     keep = relevant | (known & failed)
 
     if not limit:  # пробный прогон с --limit не портит сохранённый список

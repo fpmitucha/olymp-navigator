@@ -5,9 +5,14 @@ lxml>=5.0
 
 # Telegram-бот
 aiogram>=3.28,<4
+reportlab>=4.0         # PDF со льготами (кнопка «📄 Скачать PDF»)
 # aiohttp-socks>=0.10   # только если нужен прокси для Telegram (TELEGRAM_PROXY)
 
 # Подключатся на следующих этапах:
 # psycopg[binary]>=3.2   # PostgreSQL для бота и сайта на сервере
-# fastapi>=0.115         # API сайта (этап 4)
-# uvicorn>=0.30
+
+# Сайт
+fastapi>=0.115
+uvicorn>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9

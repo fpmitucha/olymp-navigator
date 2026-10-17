@@ -37,6 +37,10 @@ class Settings:
     # Прокси для Telegram, если провайдер его замедляет: http://user:pass@host:port или socks5://host:port
     telegram_proxy: str = os.environ.get("TELEGRAM_PROXY", "")
     # Ходить в Telegram только по IPv4: у многих провайдеров IPv6-маршрут до Telegram «висит»
+    # Telegram id администратора: ему приходят находки слежения за вузами (узнать id — у @userinfobot)
+    # Секрет для защиты форм сайта (любая длинная случайная строка); пусто — новый при каждом запуске
+    web_secret: str = os.environ.get("WEB_SECRET", "")
+    bot_admin_id: int = int(os.environ.get("BOT_ADMIN_ID", "0") or 0)
     telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")
     # Раз в сутки забирать даты этапов с olimpiada.ru, пока работает бот
     stages_autosync: bool = os.environ.get("STAGES_AUTOSYNC", "1").strip().lower() not in ("0", "false", "no")

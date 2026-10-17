@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% from "_macros.html" import closing, plural with context %}
+{% block main %}
+<section class="hero">
+  <svg class="hero-road" viewBox="0 0 1200 640" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+    <path class="lane" stroke-width="34" d="M-40 610 C 300 600, 640 590, 800 520 C 960 450, 700 400, 860 320 C 980 260, 1020 170, 1110 112"/>
+    <path class="lane inner" stroke-width="3" d="M-40 610 C 300 600, 640 590, 800 520 C 960 450, 700 400, 860 320 C 980 260, 1020 170, 1110 112"/>
+    <g class="stop"><circle cx="800" cy="520" r="11"/><text x="822" y="516">Олимпиада</text><text class="sub" x="822" y="535">отбор и финал</text></g>
+    <g class="stop"><circle cx="830" cy="424" r="11"/><text x="852" y="420">Диплом</text><text class="sub" x="852" y="439">победитель или призёр</text></g>
+    <g class="stop"><circle cx="985" cy="226" r="11"/><text x="1007" y="222">ЕГЭ от 75</text><text class="sub" x="1007" y="241">подтвердить диплом</text></g>
+    <polygon class="star" points="1130,64 1139,90 1166,90 1144,106 1152,132 1130,116 1108,132 1116,106 1094,90 1121,90"/>
+  </svg>
+  <div class="wrap">
+    <div style="max-width:640px">
+      <h1>Какая олимпиада откроет дорогу в твой вуз</h1>
+      <p class="lead">Найди олимпиаду и узнай, где она даёт поступление без экзаменов или 100 баллов — на какие программы, кому и с каким ЕГЭ.</p>
+      <form class="search" action="/olympiads" method="get" role="search">
+        <input name="q" aria-label="Олимпиада, предмет или профиль" placeholder="Высшая проба, Физтех, математика…" autocomplete="off">
+        <button type="submit">Найти</button>
+      </form>
+      <p class="quick">{% for o in popular %}<a href="/olympiad/{{ o.id }}">{{ short(o) }}</a>{% endfor %}</p>
+      <p class="hero-alt">Знаешь вуз, но не олимпиаду? <a href="/route">Подбор от вуза →</a></p>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <div class="block-head">
+      <h2>Где диплом призёра работает сильнее всего</h2>
+      <p>Каждое деление — один из {{ university_count }} вузов. Зелёные дают БВИ призёрам, синие — 100 баллов.</p>
+    </div>
+    <ol class="routes">
+      {% for r in routes %}
+      <li>
+        <a class="name" href="/olympiad/{{ r.olympiad.id }}?profile={{ r.profile|urlencode }}&diploma=prize&grade=11#fit">{{ short(r.olympiad) }}<span>{{ r.profile }}</span></a>
+        <div class="meter" role="img" aria-label="БВИ в {{ r.bvi }} вузах, 100 баллов ещё в {{ r.score }}">
+          {% for i in range(r.total) %}<i class="{{ 'bvi' if i < r.bvi else ('score100' if i < r.bvi + r.score else '') }}"></i>{% endfor %}
+        </div>
+        <div class="count"><b>{{ r.bvi }}</b> {{ 'вуз' if r.bvi == 1 else ('вуза' if r.bvi in [2,3,4] else 'вузов') }} с БВИ{% if r.score %}, ещё {{ r.score }} — 100 баллов{% endif %}</div>
+      </li>
+      {% endfor %}
+    </ol>
+    <div class="legend"><span><i style="background:var(--bvi)"></i>БВИ призёрам</span><span><i style="background:var(--ege);opacity:.75"></i>100 баллов</span><span><i style="background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--line)"></i>нет льгот</span></div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <div class="block-head">
+      <h2>Вузы</h2>
+      <p>Пока вузы не выложили особые права на приём {{ admission_year }}, показываем документы прошлого года — они помечены точкой.</p>
+    </div>
+    <div class="unis">
+      {% for u, n, bvi in uni_counts %}
+      <a href="/university/{{ uni_slug[u.university] }}"><b>{{ u.university }}</b><span>{{ plural(n, 'олимпиада', 'олимпиады', 'олимпиад') }}{% if not bvi %} · только 100 баллов{% endif %}</span></a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <div class="panel teaser">
+      <div>
+        <p class="kicker">Мой путь</p>
+        <h2>Сохрани свои дипломы — увидишь, куда уже проходишь</h2>
+        <p>Вход через Telegram-бот, без паролей. Мы храним только то, что ты сам добавишь, и удаляем всё по одной кнопке.</p>
+        <p style="margin-top:20px"><a class="btn gold" href="{{ '/me' if user else '/login' }}">{{ 'Открыть мой путь' if user else 'Войти через Telegram' }}</a></p>
+      </div>
+      <ul>
+        <li>Дипломы с уровнем олимпиады в год получения — и список вузов, где каждый работает</li>
+        <li>Вузы-цели: сразу видно, где у тебя БВИ, а где 100 баллов</li>
+        <li>Ближайшие этапы твоих олимпиад и напоминания в боте</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">{{ closing() }}</div>
+{% endblock %}

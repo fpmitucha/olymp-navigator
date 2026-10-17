@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, status, plural, closing, days_left with context %}
+{% block title %}{{ u.university }}: какие олимпиады дают БВИ и 100 баллов · Бвишечка{% endblock %}
+{% block description %}Олимпиады сезона {{ year }}, которые дают льготы при поступлении в {{ u.university }}: БВИ, 100 баллов ЕГЭ, уровень, порог ЕГЭ и ближайшие этапы.{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="page-head">
+    <p class="crumbs"><a href="/route">Подбор от вуза</a></p>
+    <h1>Олимпиады в {{ u.university }}</h1>
+    <p class="muted">{{ u.full_name }} · {{ status(u, admission_year) }}. Уровни — по перечню {{ year }}: диплом этого сезона оценят по нему.</p>
+  </div>
+
+  <div class="panel fit" id="pick">
+    <p class="kicker">Подбор от вуза</p>
+    <h2>Что тебе нужно</h2>
+    <form action="/route/{{ u_slug }}#results" method="get">
+      {% if programs %}
+      <label class="grow">Направление
+        <select name="program" required>
+          <option value="">выбери направление</option>
+          {% for p, label in programs %}<option value="{{ p }}" {% if p == program %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select></label>
+      {% endif %}
+      <label>Цель
+        <select name="diploma">
+          <option value="prize" {% if diploma == 'prize' %}selected{% endif %}>хватит призёрства</option>
+          <option value="winner" {% if diploma == 'winner' %}selected{% endif %}>готов к победе</option>
+        </select></label>
+      {% if all_profiles|length > 1 %}
+      <label>Профиль олимпиады
+        <select name="profile">
+          <option value="">любой</option>
+          {% for p in all_profiles %}<option {% if p == profile %}selected{% endif %}>{{ p }}</option>{% endfor %}
+        </select></label>
+      {% endif %}
+      <button class="btn gold" type="submit">Показать олимпиады</button>
+    </form>
+    {% if not programs %}<p class="small" style="margin-top:12px">В документе {{ u.university }} льготы не привязаны к программам: олимпиада должна соответствовать профилю направления.</p>{% endif %}
+  </div>
+
+  {% if chosen %}
+  <div id="results" class="route-results">
+    <p class="route-summary">
+      {% if items %}{{ 'Призёру' if diploma == 'prize' else 'Победителю' }}{% if program %} на «{{ program_title }}»{% endif %} {% if profile %} по профилю «{{ profile }}»{% endif %} подходят <b>{{ plural(items|length, 'олимпиада', 'олимпиады', 'олимпиад') }}</b>{% if counts.bvi %}: БВИ — {{ counts.bvi }}{% endif %}{% if counts.score100 %}, 100 баллов ЕГЭ — {{ counts.score100 }}{% endif %}{% if counts.dvi100 %}, 100 за ДВИ — {{ counts.dvi100 }}{% endif %}.
+      {% else %}По этому направлению {{ 'призёрам' if diploma == 'prize' else 'победителям' }} олимпиад сезона {{ year }} льгот не нашли.{% if diploma == 'prize' %} Попробуй цель «готов к победе».{% endif %}{% endif %}
+    </p>
+
+    {% for it in items %}
+    {% set o = it.olympiad %}
+    {% set shown = it.profiles|selectattr('profile', 'equalto', profile)|list if profile else it.profiles %}
+    {% set next = stages[o.id][0] if stages[o.id] else None %}
+    {% set scores = shown|map(attribute='min_score')|unique|list %}
+    {% set one_score = scores|length == 1 %}
+    <article class="route-item">
+      <div class="route-main">
+        <h3><a href="/olympiad/{{ o.id }}?profile={{ shown[0].profile|urlencode }}&diploma={{ diploma }}#fit">{{ 'ВсОШ — заключительный этап' if o.is_vsosh else short(o) }}</a></h3>
+        <div class="pills">
+          {% for p in shown[:8] %}
+          <span class="pill {{ p.benefit }}">{{ p.profile }}{% if p.level %} · {{ ['', 'I', 'II', 'III'][p.level] }}{% endif %} · {{ {'bvi': 'БВИ', 'score100': '100 ЕГЭ', 'dvi100': '100 ДВИ'}[p.benefit] }}{% if p.min_score and not one_score %} · ЕГЭ от {{ p.min_score }}{% endif %}</span>
+          {% endfor %}
+          {% if shown|length > 8 %}<details class="more"><summary>ещё {{ shown|length - 8 }}</summary>
+            {% for p in shown[8:] %}<span class="pill {{ p.benefit }}">{{ p.profile }}{% if p.level %} · {{ ['', 'I', 'II', 'III'][p.level] }}{% endif %} · {{ {'bvi': 'БВИ', 'score100': '100 ЕГЭ', 'dvi100': '100 ДВИ'}[p.benefit] }}</span>{% endfor %}
+          </details>{% endif %}
+        </div>
+      </div>
+      <div class="route-side">
+        <span>{{ badge(it.best) }}{% if one_score and scores[0] %} <span class="small muted nowrap">ЕГЭ от {{ scores[0] }}</span>{% endif %}</span>
+        {% if next %}
+        <span class="next"><b>{{ next.kind_label }}</b>
+          {% if next.starts_at and next.starts_at > today %}{{ next.starts_at.strftime('%d.%m') }} · {{ days_left(next.starts_at, today) }}{% elif next.ends_at %}до {{ next.ends_at.strftime('%d.%m') }} · {{ days_left(next.ends_at, today) }}{% endif %}</span>
+        {% else %}
+        <span class="next muted">дат пока нет</span>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+    {% if items %}
+    <p class="muted small" style="margin-top:18px">Это правила {{ u.university }} на приём {{ u.admission_year }}{% if u.admission_year < admission_year %} — на {{ admission_year }} вуз их ещё не опубликовал, мы обновим данные и напишем в боте подписчикам{% endif %}. Источник: <a href="{{ u.source_url }}" rel="nofollow noopener">{{ u.source_title or 'документ вуза' }}</a>.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+  <div style="height:40px"></div>
+  {{ closing() }}
+</div>
+{% endblock %}

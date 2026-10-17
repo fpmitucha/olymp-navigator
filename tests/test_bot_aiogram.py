@@ -47,6 +47,9 @@ if HAS_AIOGRAM:
                     message_id=self._next_id, date=datetime.now(), text=method.text,
                     chat=Chat(id=method.chat_id, type="private"), reply_markup=method.reply_markup,
                 )
+            if type(method).__name__ == "SendDocument":
+                self._next_id += 1
+                return Message(message_id=self._next_id, date=datetime.now(), chat=Chat(id=method.chat_id, type="private"))
             if isinstance(method, (AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText)):
                 if self.edit_error and isinstance(method, EditMessageText):
                     raise TelegramBadRequest(method=method, message=self.edit_error)
@@ -70,7 +73,11 @@ class BotFlowTest(unittest.TestCase):
         self.addCleanup(self.storage.close)
         self.session = FakeSession()
         self.bot = Bot("42:TEST", session=self.session)
-        self.dp = build_dispatcher(self.catalog, self.storage, today=lambda: TODAY)
+        from app.benefits import BenefitsCatalog, parse_file
+        from tests.test_benefits import university
+
+        self.benefits = BenefitsCatalog([parse_file(university(), self.catalog, "test.json")])
+        self.dp = build_dispatcher(self.catalog, self.storage, today=lambda: TODAY, benefits=self.benefits)
         self.update_id = 0
 
     # -- helpers ---------------------------------------------------------------
@@ -135,9 +142,9 @@ class BotFlowTest(unittest.TestCase):
         # в тестовом перечне 2026/27: 1 ур. — Физтех, Ломоносов, «Архитектура и искусство»;
         # 2 ур. — НТО, ОММО; 3 ур. — НТО, ОММО
         self.assertEqual(labels, ["1️⃣ уровень · 3", "2️⃣ уровень · 2", "3️⃣ уровень · 2",
-                                  "🏆 ВсОШ", "🔔 Подписки", "ℹ️ Помощь"])
+                                  "🏆 ВсОШ", "🎓 Вузы", "🔔 Подписки", "🤝 Сопровождение", "ℹ️ Помощь"])
         rows = [len(row) for row in calls[0].reply_markup.inline_keyboard]
-        self.assertEqual(rows, [2, 2, 2])
+        self.assertEqual(rows, [2, 2, 2, 2])
         self.assertEqual(self.storage.stats()["users"], 1)
 
     def test_olympiad_buttons_left_aligned(self):
@@ -175,7 +182,8 @@ class BotFlowTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0].text.startswith("<b>Физтех</b>"))
         labels = [label for label, _ in self.buttons(calls[0])]
-        self.assertEqual(labels, ["🔔 Подписаться на этапы", "📋 Подробнее", "🌐 Сайт", "🏠 Меню"])
+        self.assertEqual(labels, ["🔔 Подписаться на этапы", "📋 Подробнее", "🌐 Сайт",
+                                  "🎓 Льготы в вузах · 1", "🏠 Меню"])
 
     def test_results_card_and_back(self):
         results = self.sent(self.feed(self.message("физика")))[0]
@@ -285,6 +293,128 @@ class BotFlowTest(unittest.TestCase):
         self.session.edit_error = "Bad Request: message can't be edited"
         calls = self.feed(self.callback(self.nav(a="help")))
         self.assertIn("Как пользоваться", self.sent(calls)[0].text)
+
+    def test_benefits_screens(self):
+        card = self.sent(self.feed(self.message("Физтех")))[0]
+        benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
+        self.assertIn("🎓 <b>Льготы: «Физтех»</b>", benefits.text)
+        self.assertIn("🏅 БВИ — победителям: математика", benefits.text)
+        detail = self.only_edit(self.feed(self.callback(self.button(benefits, "📄 Тестовый вуз"))))
+        self.assertIn("🏅 БВИ — победителям (математика; 1 ур.)", detail.text)
+        again = self.only_edit(self.feed(self.callback(self.button(detail, "◀️ Ко всем вузам"))))
+        self.assertEqual(again.text, benefits.text)
+        back = self.only_edit(self.feed(self.callback(self.button(benefits, "◀️ К олимпиаде"))))
+        self.assertTrue(back.text.startswith("<b>Физтех</b>"))
+
+        robofest = self.sent(self.feed(self.message("Робофест")))[0]
+        self.assertNotIn("🎓", "".join(label for label, _ in self.buttons(robofest)))  # нет льгот — нет кнопки
+
+        unis = self.only_edit(self.feed(self.callback(self.nav(a="unis"))))
+        self.assertIn("🎓 <b>Вузы — 1</b>", unis.text)
+        uni = self.only_edit(self.feed(self.callback(self.button(unis, "Тестовый вуз"))))
+        self.assertIn("🏅 <b>БВИ — победителям</b>", uni.text)
+        self.assertEqual([label for label, _ in self.buttons(uni)],
+                         ["🔔 Сообщать об обновлениях", "◀️ К вузам", "🏠 Меню"])
+        subscribed = self.only_edit(self.feed(self.callback(self.button(uni, "🔔"))))
+        self.assertTrue(self.storage.is_subscribed_university(USER_ID, "Тестовый вуз"))
+        self.assertEqual(self.storage.university_subscribers("Тестовый вуз"), [USER_ID])
+        self.assertIn("🔕 Не сообщать об обновлениях", [label for label, _ in self.buttons(subscribed)])
+        self.only_edit(self.feed(self.callback(self.button(subscribed, "🔕"))))
+        self.assertFalse(self.storage.is_subscribed_university(USER_ID, "Тестовый вуз"))
+        stale = self.feed(self.callback(self.nav(a="uni", q=99)))
+        self.assertTrue(next(c for c in stale if isinstance(c, AnswerCallbackQuery)).show_alert)
+
+    def test_diploma_fit(self):
+        self.views_year = self.catalog.current_year
+        card = self.sent(self.feed(self.message("Физтех")))[0]
+        benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
+        step = self.only_edit(self.feed(self.callback(self.button(benefits, "🎯 Подобрать"))))
+        if "По какому профилю" in step.text:
+            step = self.only_edit(self.feed(self.callback(self.button(step, "математика"))))
+        self.assertIn("Ты победитель или призёр?", step.text)
+        winner = self.only_edit(self.feed(self.callback(self.button(step, "🥇 Победитель"))))
+        self.assertIn("За какой класс", winner.text)
+        year = self.only_edit(self.feed(self.callback(self.button(winner, "11 класс"))))
+        # уровень математики Физтеха менялся (2 → 1) — бот спрашивает год диплома
+        self.assertIn("В каком году получен диплом", year.text)
+        result = self.only_edit(self.feed(self.callback(self.button(year, self.views_year))))
+        self.assertIn("<b>Тестовый вуз</b>", result.text)
+        old = self.only_edit(self.feed(self.callback(self.button(year, "2024/25"))))
+        self.assertIn("уровень 2 в перечне 2024/25", old.text)
+        self.assertIn("🏅 БВИ", result.text)
+        self.assertIn("📄 Тестовый вуз", [label for label, _ in self.buttons(result)])
+        tenth_year = self.only_edit(self.feed(self.callback(self.button(winner, "10 класс"))))
+        tenth = self.only_edit(self.feed(self.callback(self.button(tenth_year, self.views_year))))
+        self.assertIn("Ни один из собранных вузов", tenth.text)  # в тестовом вузе — только за 11 класс
+        prize = self.only_edit(self.feed(self.callback(self.button(step, "🥈 Призёр"))))
+        prize11_year = self.only_edit(self.feed(self.callback(self.button(prize, "11 класс"))))
+        prize11 = self.only_edit(self.feed(self.callback(self.button(prize11_year, self.views_year))))
+        self.assertIn("💯 100 баллов ЕГЭ", prize11.text)
+        self.assertNotIn("🏅 БВИ", prize11.text)
+        back = self.only_edit(self.feed(self.callback(self.button(prize11, "🎓 К льготам"))))
+        self.assertEqual(back.text, benefits.text)
+
+    def test_pdf_export(self):
+        from aiogram.methods import SendDocument
+
+        card = self.sent(self.feed(self.message("Физтех")))[0]
+        benefits = self.only_edit(self.feed(self.callback(self.button(card, "🎓 Льготы"))))
+        calls = self.feed(self.callback(self.button(benefits, "📄 Скачать PDF")))
+        docs = [c for c in calls if isinstance(c, SendDocument)]
+        if not docs:  # у олимпиады несколько профилей — сначала выбор профиля
+            choose = self.only_edit(calls)
+            self.assertIn("По какому профилю", choose.text)
+            docs = [c for c in self.feed(self.callback(self.button(choose, "математика")))
+                    if isinstance(c, SendDocument)]
+        self.assertEqual(len(docs), 1)
+        self.assertTrue(docs[0].document.data.startswith(b"%PDF"))
+        self.assertTrue(docs[0].document.filename.endswith(".pdf"))
+        self.assertIn("Льготы", docs[0].caption)
+
+    def test_help_request(self):
+        import asyncio
+
+        from app.bot.notifier import forward_help_requests
+
+        menu = self.sent(self.feed(self.message("/start")))[0]
+        offer = self.only_edit(self.feed(self.callback(self.button(menu, "🤝 Сопровождение"))))
+        self.assertIn("Сопровождение до диплома", offer.text)
+        done = self.only_edit(self.feed(self.callback(self.button(offer, "✅ Оставить заявку"))))
+        self.assertIn("Заявка отправлена", done.text)
+        self.feed(self.callback(self.button(offer, "✅ Оставить заявку")))  # повторное нажатие — без дубля
+        again = self.only_edit(self.feed(self.callback(self.button(menu, "🤝 Сопровождение"))))
+        self.assertIn("Заявка уже у нас", again.text)
+        self.assertNotIn("✅ Оставить заявку", [label for label, _ in self.buttons(again)])
+        deep = self.sent(self.feed(self.message("/start help")))[0]
+        self.assertIn("Сопровождение до диплома", deep.text)
+
+        self.storage.add_diploma(USER_ID, self.catalog.search("Физтех")[0].olympiad.id, "математика", "prize",
+                                 11, "2025/26")
+        self.storage.subscribe_university(USER_ID, "МГУ")
+        outbox = []
+
+        async def send(chat_id, text):
+            outbox.append((chat_id, text))
+
+        self.assertEqual(asyncio.run(forward_help_requests(self.storage, self.catalog, send, 42)), 1)
+        chat_id, text = outbox[0]
+        self.assertEqual(chat_id, 42)
+        self.assertIn(f"tg://user?id={USER_ID}", text)
+        self.assertIn("Физтех", text)
+        self.assertIn("Вузы-цели:</b> МГУ", text)
+        self.assertEqual(asyncio.run(forward_help_requests(self.storage, self.catalog, send, 42)), 0)
+
+    def test_login_deep_link(self):
+        self.storage.create_login("tok123")
+        reply = self.sent(self.feed(self.message("/start login_tok123")))[0]
+        self.assertIn("вернись на сайт", reply.text)
+        self.assertEqual(self.storage.take_login("tok123"), USER_ID)
+        stale = self.sent(self.feed(self.message("/start login_nope")))[0]
+        self.assertIn("устарела", stale.text)
+        hint = self.sent(self.feed(self.message("/start error")))[0]
+        self.assertIn("Ошибка", hint.text)
+        thanks = self.sent(self.feed(self.message("Ошибка. Физтех: неверный порог")))[0]
+        self.assertIn("Спасибо", thanks.text)
 
     def test_make_bot_connection_options(self):
         import socket
