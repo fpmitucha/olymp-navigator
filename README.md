@@ -183,9 +183,13 @@ python -m app.cli web run            # http://127.0.0.1:8000
 ```
 
 Страницы: `/`, `/olympiads?q=…&level=1`, `/olympiad/<id>` (подбор — параметрами `profile`, `diploma`,
-`grade`), `/olympiad/<id>/<вуз>`, `/olympiad/<id>/pdf?profile=…`, `/universities`, `/university/<вуз>`.
+`grade`, `year`), `/olympiad/<id>/<вуз>`, `/olympiad/<id>/pdf?profile=…`, `/universities`, `/university/<вуз>`,
+подбор от вуза `/route/<вуз>?program=…&diploma=prize`, личный кабинет `/me` (вход через бота),
+заявка на сопровождение `/help` (бот пересылает заявки на `BOT_ADMIN_ID`).
 JSON: `/api/olympiads?q=…`, `/api/fit?olympiad=…&profile=…&diploma=winner|prize&grade=11`,
 описание API — `/api/docs`. Даты этапов сайт берёт из базы бота (`data/bot.sqlite3`).
+
+Запуск на сервере с HTTPS — в [DEPLOY.md](DEPLOY.md).
 
 ## Тесты
 

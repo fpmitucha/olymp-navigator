@@ -610,7 +610,9 @@ def cmd_web_run(args: argparse.Namespace) -> int:
     app = create_app(catalog, _benefits(catalog, strict=False), storage_path=settings.bot_db_path,
                      secret=settings.web_secret)
     print(f"Сайт: http://{args.host}:{args.port}  (остановка — Ctrl+C)")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    # за обратным прокси (Caddy/nginx) доверяем X-Forwarded-Proto — иначе cookie входа не получит флаг Secure
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info", proxy_headers=True,
+                forwarded_allow_ips=args.trusted_proxies)
     return 0
 
 
@@ -867,6 +869,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = web.add_parser("run", help="запустить сайт локально")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--trusted-proxies", default="127.0.0.1",
+                   help="откуда принимать X-Forwarded-*: адрес прокси или * (в Docker за Caddy)")
     p.set_defaults(func=cmd_web_run)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)

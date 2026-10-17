@@ -34,5 +34,31 @@ services:
     volumes:
       - ./data:/app/data   # перечни (data/rsr) и база бота (data/bot.sqlite3)
 
+  web:
+    build: .
+    restart: unless-stopped
+    command: ["web", "run", "--host", "0.0.0.0", "--port", "8000", "--trusted-proxies", "*"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data   # та же база, что у бота: вход, кабинет, заявки
+    ports:
+      - "127.0.0.1:8000:8000"   # наружу — только через Caddy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - web
+    profiles: ["https"]   # docker compose --profile https up -d
+
 volumes:
   pgdata:
+  caddy_data:
