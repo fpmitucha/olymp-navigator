@@ -26,7 +26,11 @@ if [ -f /tmp/.env ]; then
 fi
 [ -f .env ] || { echo "ОШИБКА: нет .env (TELEGRAM_BOT_TOKEN=...)"; exit 1; }
 grep -q '^WEB_SECRET=..' .env || echo "WEB_SECRET=$(openssl rand -hex 32)" >> .env
-grep -q '^DOMAIN=' .env || echo "DOMAIN=:80" >> .env
+IP=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+# без домена — HTTPS-сертификат Let's Encrypt прямо на IP-адрес
+if ! grep -q '^DOMAIN=' .env && ! grep -q '^CADDYFILE=' .env; then
+  printf 'CADDYFILE=Caddyfile.ip\nSERVER_IP=%s\n' "$IP" >> .env
+fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow 80 >/dev/null; ufw allow 443 >/dev/null
@@ -35,6 +39,11 @@ fi
 docker compose up -d --build bot web
 docker compose --profile https up -d caddy
 
-IP=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 echo
-echo "Готово. Сайт: http://$IP   Логи: cd $DIR && docker compose logs -f bot web"
+if grep -q '^CADDYFILE=Caddyfile.ip' .env; then
+  echo "Готово. Сайт: https://$IP  (сертификат выпускается ~1 минуту; если не открывается —"
+  echo "  docker compose logs caddy)"
+else
+  echo "Готово. Сайт: http://$IP"
+fi
+echo "Логи: cd $DIR && docker compose logs -f bot web"

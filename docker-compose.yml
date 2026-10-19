@@ -52,8 +52,9 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN:-localhost}
+      SERVER_IP: ${SERVER_IP:-}
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro   # Caddyfile.ip — сертификат на IP без домена
       - caddy_data:/data
     depends_on:
       - web

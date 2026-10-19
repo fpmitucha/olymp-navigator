@@ -1,0 +1,11 @@
+# Сайт по IP-адресу с настоящим сертификатом Let's Encrypt (без домена).
+# Let's Encrypt выдаёт сертификаты на IP только короткие (≈6 дней, профиль shortlived) — Caddy продлевает их сам.
+https://{$SERVER_IP} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	encode gzip
+	reverse_proxy web:8000
+}
