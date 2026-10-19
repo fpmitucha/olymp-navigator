@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import difflib
+import functools
 import json
 import re
 from dataclasses import dataclass, field
@@ -223,7 +224,16 @@ def _profile_fits(catalog_name: str, wanted: set[str]) -> bool:
     parts = {p.strip() for p in re.split(r"[:,]", norm)}
     if parts & wanted or any(len(w) >= 20 and norm.startswith(w) for w in wanted):
         return True
-    return any(difflib.SequenceMatcher(None, norm, w).ratio() >= 0.9 for w in wanted)
+    return any(_typo(norm, w) for w in wanted)
+
+
+@functools.lru_cache(maxsize=None)
+def _typo(a: str, b: str) -> bool:
+    """Отличие на опечатку. Сначала дешёвые проверки: при ratio ≥ 0.9 длины почти равны."""
+    if min(len(a), len(b)) < 0.8 * max(len(a), len(b)):
+        return False
+    m = difflib.SequenceMatcher(None, a, b)
+    return m.real_quick_ratio() >= 0.9 and m.quick_ratio() >= 0.9 and m.ratio() >= 0.9
 
 
 def wildcard_label(profiles: list[str] | None, subjects: list[str] | None, levels: list[int] | None) -> str:
