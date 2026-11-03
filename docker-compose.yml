@@ -26,5 +26,13 @@ services:
         condition: service_healthy
     profiles: ["cli"]   # запускается вручную: docker compose run --rm app ...
 
+  bot:
+    build: .
+    restart: unless-stopped
+    command: ["bot", "run"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data   # перечни (data/rsr) и база бота (data/bot.sqlite3)
+
 volumes:
   pgdata:
