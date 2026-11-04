@@ -111,6 +111,7 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>Как к тебе обращаться<input class="field" name="name" value="{{ profile.name }}" maxlength="60" autocomplete="given-name"></label>
       <label>Класс<select class="field" name="grade"><option value="0">—</option>{% for g in range(7, 12) %}<option value="{{ g }}" {% if profile.grade == g %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></label>
+      <label>Телефон <span class="muted small">— необязательно; чтобы куратор мог позвонить по сопровождению</span><input class="field" name="phone" type="tel" value="{{ phone }}" maxlength="20" autocomplete="tel" placeholder="+7 900 000-00-00"></label>
       <button class="btn" type="submit">Сохранить</button>
     </form>
     <div class="head-actions" style="margin-top:26px">
@@ -123,7 +124,7 @@
         <label>Напиши «удалить», чтобы подтвердить<input class="field" name="confirm" autocomplete="off"></label>
         <button class="btn small" type="submit">Удалить всё</button>
       </form>
-      <p class="muted small">Удалятся профиль, дипломы и подписки — и в боте тоже.</p>
+      <p class="muted small">Удалятся профиль, телефон, дипломы и подписки — и в боте тоже.</p>
     </details>
   </section>
 </div>

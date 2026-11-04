@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Статистика · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% macro table(rows, cols, empty='Пока нет данных') -%}
+<div class="adm-table flat"><table>
+  <thead><tr>{% for key, label in cols %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in rows %}<tr>{% for key, label in cols %}<td>{{ r[key] if r[key] is not none else '' }}</td>{% endfor %}</tr>
+  {% else %}<tr><td colspan="{{ cols|length }}" class="muted">{{ empty }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{%- endmacro %}
+{% macro cohort(rows, unit) -%}
+<div class="adm-table flat"><table class="cohort">
+  <thead><tr><th>Неделя прихода</th><th>{{ unit }}</th>{% for w in range(1, 7) %}<th>+{{ w }} нед.</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in rows %}<tr><td>{{ r.cohort }}</td><td>{{ r.size }}</td>
+    {% for c in r.cells %}<td>{% if c is none %}<span class="muted">·</span>{% else %}<span class="heat" style="--p: {{ c }}%">{{ c }}%</span>{% endif %}</td>{% endfor %}</tr>
+  {% else %}<tr><td colspan="8" class="muted">Пока нет данных</td></tr>{% endfor %}</tbody>
+</table></div>
+{%- endmacro %}
+{% block main %}
+{% set m = r.summary %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin">← Клиенты</a>
+  <div class="adm-head">
+    <div><h1>Статистика</h1><p class="muted">С {{ r.since }} · свои заходы куратора не считаются</p></div>
+    <div class="adm-groups">{% for d in [7, 30, 90] %}<a class="chip {{ 'on' if r.days == d }}" href="/admin/stats?days={{ d }}">{{ d }} дней</a>{% endfor %}
+      <a class="chip" href="/admin/users">Пользователи →</a></div>
+  </div>
+
+  <section class="st-cards">
+    <div><p>Посетители сайта</p><b>{{ m.visitors }}</b><span>новых {{ m.new_visitors }}</span></div>
+    <div><p>Просмотры</p><b>{{ m.views }}</b><span>{{ m.pages_per_visit }} стр. за визит</span></div>
+    <div><p>Активны в боте</p><b>{{ m.bot_active }}</b><span>новых {{ m.bot_new }} · всего {{ m.bot_total }}</span></div>
+    <div><p>Входы на сайт</p><b>{{ m.logins }}</b><span>{{ m.login_users }} человек</span></div>
+    <div><p>Заявки на сопровождение</p><b>{{ m.help }}</b><span>клиентов всего {{ m.crm }}</span></div>
+    <div><p>Подписки на олимпиады</p><b>{{ m.subs }}</b><span>заблокировали бота {{ m.bot_blocked }}</span></div>
+    <div><p>Оставили телефон</p><b>{{ m.phones }}</b><span><a href="/admin/users?only=phone">список</a></span></div>
+  </section>
+
+  <section class="adm-card">
+    <div class="rm-head"><h2>По дням</h2><div class="rm-legend"><span><i class="dot st-web"></i>посетители сайта</span><span><i class="dot st-bot"></i>активны в боте</span></div></div>
+    <div class="st-chart" role="img" aria-label="Посетители сайта и активные пользователи бота по дням">
+      {% for d in r.daily %}
+      <div class="st-col" title="{{ d.day }}: сайт {{ d.visitors }} (просмотров {{ d.views }}), бот {{ d.bot }}">
+        <span class="st-web" style="height: {{ (100 * d.visitors / r.peak)|round(1) }}%"></span>
+        <span class="st-bot" style="height: {{ (100 * d.bot / r.peak)|round(1) }}%"></span>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="st-axis small muted"><span>{{ r.daily[0].day }}</span><span>макс. {{ r.peak }}</span><span>{{ r.daily[-1].day }}</span></div>
+  </section>
+
+  <section class="adm-card">
+    <h2>Воронка</h2>
+    {% for f in r.funnel %}
+    <div class="st-funnel"><span class="label">{{ f.step }}</span><span class="bar"><i style="width: {{ f.pct }}%"></i></span><b>{{ f.n }}</b><span class="muted small">{{ f.pct }}%</span></div>
+    {% endfor %}
+  </section>
+
+  <div class="st-grid">
+    <section class="adm-card"><h2>Что ищут</h2>{{ table(r.searches, [('query', 'Запрос'), ('n', 'Раз'), ('site', 'Сайт'), ('bot', 'Бот'), ('results', 'Найдено в ср.')]) }}</section>
+    <section class="adm-card"><h2>Ищут, но не находят</h2><p class="small muted">Подсказки, каких олимпиад или написаний не хватает.</p>{{ table(r.empty, [('query', 'Запрос'), ('n', 'Раз')], 'Всё находится') }}</section>
+    <section class="adm-card"><h2>Олимпиады</h2>{{ table(r.olympiads, [('name', 'Олимпиада'), ('views', 'Просмотры'), ('visitors', 'Посетители')]) }}</section>
+    <section class="adm-card"><h2>Вузы</h2>{{ table(r.universities, [('path', 'Страница'), ('views', 'Просмотры'), ('visitors', 'Посетители')]) }}</section>
+    <section class="adm-card"><h2>Страницы</h2>{{ table(r.pages, [('path', 'Страница'), ('views', 'Просмотры'), ('visitors', 'Посетители')]) }}</section>
+    <section class="adm-card"><h2>Новости</h2>{{ table(r.news, [('path', 'Новость'), ('views', 'Просмотры'), ('visitors', 'Посетители')]) }}</section>
+    <section class="adm-card"><h2>Откуда приходят</h2>{{ table(r.sources, [('source', 'Источник'), ('visitors', 'Посетители'), ('logged', 'Вошли')]) }}</section>
+    <section class="adm-card"><h2>Рекламные кампании (utm)</h2><p class="small muted">Ссылки вида ?utm_source=vk&amp;utm_campaign=sh2 — коды сегментов из брифа.</p>{{ table(r.campaigns, [('campaign', 'Кампания'), ('source', 'Источник'), ('visitors', 'Посетители'), ('logged', 'Вошли'), ('help', 'Заявки')], 'Кампаний с utm-метками пока нет') }}</section>
+    <section class="adm-card"><h2>Устройства</h2>{{ table(r.devices, [('device', 'Устройство'), ('visitors', 'Посетители')]) }}</section>
+  </div>
+
+  <section class="adm-card"><h2>Удержание в боте</h2><p class="small muted">Доля пользователей, которые вернулись (в бот или на сайт после входа) через N недель после первого запуска.</p>{{ cohort(r.ret_bot, 'Новых') }}</section>
+  <section class="adm-card"><h2>Удержание на сайте</h2><p class="small muted">По браузерам: доля посетителей, вернувшихся через N недель.</p>{{ cohort(r.ret_web, 'Новых') }}</section>
+</div>
+{% endblock %}

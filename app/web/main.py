@@ -151,6 +151,44 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
 
     app.state.db = db  # для тестов и служебных скриптов
 
+    from app import stats as stats_mod
+
+    VISITOR_COOKIE = "bv_vid"
+    SKIP_PREFIXES = ("/static", "/assets", "/api", "/admin", "/login/check", "/news/rss.xml", "/favicon")
+
+    @app.middleware("http")
+    async def track_pageviews(request: Request, call_next):
+        """Просмотры страниц для статистики: обезличенный id браузера, источник (utm, реферер), устройство."""
+        response = await call_next(request)
+        path = request.url.path
+        ua = request.headers.get("user-agent", "")
+        if (request.method != "GET" or response.status_code != 200 or path.startswith(SKIP_PREFIXES)
+                or not response.headers.get("content-type", "").startswith("text/html") or stats_mod.is_bot(ua)):
+            return response
+        try:
+            visitor = request.cookies.get(VISITOR_COOKIE, "")
+            new = not re.fullmatch(r"[\w-]{16,40}", visitor)
+            if new:
+                visitor = secrets.token_urlsafe(16)
+            user = current_user(request)
+            if admin_id and user == admin_id:
+                return response          # свои заходы не считаем
+            ref = request.headers.get("referer", "")
+            ref_host = re.sub(r"^https?://([^/:]+).*$", r"\1", ref) if ref.startswith("http") else ""
+            if ref_host and ref_host == request.url.hostname:
+                ref_host = ""
+            qp = request.query_params
+            with db() as s:
+                s.log_pageview(visitor=visitor, telegram_id=user, path=path, ref_host=ref_host,
+                               utm_source=qp.get("utm_source", ""), utm_campaign=qp.get("utm_campaign", ""),
+                               device=stats_mod.device_of(ua), day=today().isoformat())
+            if new:
+                response.set_cookie(VISITOR_COOKIE, visitor, max_age=60 * 60 * 24 * 365, httponly=True,
+                                    samesite="lax", secure=request.url.scheme == "https")
+        except Exception:  # noqa: BLE001 — статистика не должна ронять сайт
+            pass
+        return response
+
     def short(o: CatalogOlympiad) -> str:
         from app.bot.texts import button_name
 
@@ -232,6 +270,10 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         q = " ".join(q.split())[:100]
         if q:
             hits = catalog.search(q, limit=60)
+            with db() as s:
+                user = current_user(request)
+                if not (admin_id and user == admin_id):
+                    s.log_search("site", q, len(hits), user)
             if len(hits) == 1:
                 return RedirectResponse(f"/olympiad/{hits[0].olympiad.id}", status_code=303)
             items = [(h.olympiad, h.matched_profiles) for h in hits]
@@ -457,6 +499,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                 return RedirectResponse("/login", status_code=303)
             sid = secrets.token_urlsafe(32)
             s.create_session(sid, telegram_id)
+            s.log_auth(telegram_id, request.cookies.get("bv_vid", ""))
         response = RedirectResponse("/me", status_code=303)
         response.set_cookie(SESSION_COOKIE, sid, max_age=60 * 60 * 24 * 60, httponly=True, samesite="lax",
                             secure=request.url.scheme == "https")
@@ -487,6 +530,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                             key=lambda st: st.starts_at or date.max)
             code = s.user_code(user)
             has_roadmap = s.crm_client(user) is not None
+            phone = s.user_info(user)["phone"] or ""
         diplomas = []
         best_by_uni: dict[str, str] = {}
         for d in raw_diplomas:
@@ -509,13 +553,21 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         return render(request, "me.html", profile=profile, diplomas=diplomas, targets=targets,
                       olympiads_followed=olympiads_followed, next_stage=next_stage, stages=stages[:12],
                       today=today(), best_by_uni=best_by_uni, all_universities=universities, code=code,
-                      has_roadmap=has_roadmap)
+                      has_roadmap=has_roadmap, phone=phone)
 
     @app.post("/me/profile")
-    def me_profile(request: Request, csrf: str = Form(""), name: str = Form(""), grade: int = Form(0)):
+    def me_profile(request: Request, csrf: str = Form(""), name: str = Form(""), grade: int = Form(0),
+                   phone: str = Form("")):
         user = check_csrf(request, csrf)
+        digits = re.sub(r"\D", "", phone)
+        if digits.startswith("8") and len(digits) == 11:
+            digits = "7" + digits[1:]
         with db() as s:
             s.save_profile(user, " ".join(name.split())[:60], grade if 5 <= grade <= 11 else None)
+            if not phone.strip():
+                s.set_phone(user, None)
+            elif 10 <= len(digits) <= 15:
+                s.set_phone(user, "+" + digits)
         return RedirectResponse("/me#settings", status_code=303)
 
     @app.get("/me/diploma/new", response_class=HTMLResponse)
@@ -1113,6 +1165,30 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         with db() as s:
             s.close_uni_requests(university)
         return RedirectResponse("/admin/requests", status_code=303)
+
+    # -- статистика -------------------------------------------------------------
+
+    @app.get("/admin/stats", response_class=HTMLResponse)
+    def admin_stats(request: Request, days: int = Query(30, ge=1, le=365)):
+        require_admin(request)
+        with db() as s:
+            data = stats_mod.report(s, catalog, today(), days, admin_id)
+        return render(request, "admin_stats.html", r=data)
+
+    @app.get("/admin/users", response_class=HTMLResponse)
+    def admin_users(request: Request, q: str = "", only: str = ""):
+        require_admin(request)
+        with db() as s:
+            rows = stats_mod.users(s, q, only)
+        return render(request, "admin_users.html", rows=rows[:500], total=len(rows), q=q, only=only)
+
+    @app.get("/admin/users.csv")
+    def admin_users_csv(request: Request, q: str = "", only: str = ""):
+        require_admin(request)
+        with db() as s:
+            rows = stats_mod.users(s, q, only)
+        return Response(stats_mod.users_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="users.csv"'})
 
     # -- JSON ------------------------------------------------------------------
 

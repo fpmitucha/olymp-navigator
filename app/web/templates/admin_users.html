@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Пользователи · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin/stats">← Статистика</a>
+  <div class="adm-head">
+    <div><h1>Пользователи <span class="muted">{{ total }}</span></h1><p class="muted">Все, кто запускал бота или входил на сайт. Сверху — кто был недавно.</p></div>
+    <a class="btn ghost small" href="/admin/users.csv?q={{ q|urlencode }}&only={{ only }}">Скачать CSV</a>
+  </div>
+  <div class="adm-groups">
+    <a class="chip {{ 'on' if not only }}" href="/admin/users?q={{ q|urlencode }}">Все</a>
+    <a class="chip {{ 'on' if only == 'site' }}" href="/admin/users?only=site&q={{ q|urlencode }}">Входили на сайт</a>
+    <a class="chip {{ 'on' if only == 'phone' }}" href="/admin/users?only=phone&q={{ q|urlencode }}">С телефоном</a>
+    <a class="chip {{ 'on' if only == 'crm' }}" href="/admin/users?only=crm&q={{ q|urlencode }}">Клиенты</a>
+    <form method="get" class="adm-search">{% if only %}<input type="hidden" name="only" value="{{ only }}">{% endif %}
+      <input class="field" type="search" name="q" value="{{ q }}" placeholder="@ник, имя, телефон, ID" aria-label="Поиск"></form>
+  </div>
+  <div class="adm-table">
+    <table>
+      <thead><tr><th>Пользователь</th><th>Телефон</th><th>Класс</th><th>Источник</th><th>Первый раз</th><th>Последний</th><th>Дней активности</th><th>Входы</th><th>Подписки</th><th></th></tr></thead>
+      <tbody>
+      {% for u in rows %}
+      <tr>
+        <td>{% if u.username %}<a class="strong" href="https://t.me/{{ u.username }}" target="_blank" rel="noopener">@{{ u.username }}</a>{% else %}<span class="muted">без ника</span>{% endif %}
+          <div class="small">{{ u.display }}{% if u.code %} · ID {{ u.code }}{% endif %}{% if not u.is_active %} · <span class="warn">заблокировал бота</span>{% endif %}</div></td>
+        <td class="small">{% if u.phone %}<a href="tel:{{ u.phone }}">{{ u.phone }}</a>{% else %}—{% endif %}</td>
+        <td>{{ u.grade or '—' }}</td>
+        <td class="small">{{ u.source or '—' }}</td>
+        <td class="small">{{ u.created_at[:10] }}</td>
+        <td class="small">{{ u.last[:16]|replace('T', ' ') }}</td>
+        <td class="small">бот {{ u.bot_days }} · сайт {{ u.web_days }}</td>
+        <td>{{ u.logins }}</td>
+        <td class="small">{{ u.subs }}{% if u.diplomas %} · дипл. {{ u.diplomas }}{% endif %}</td>
+        <td class="small">{% if u.crm %}<a href="/admin/client/{{ u.code }}">клиент</a>{% elif u.help %}<span class="warn">заявка</span>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="10" class="muted">Никого не нашли.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if total > rows|length %}<p class="small muted">Показаны первые {{ rows|length }} — остальные в CSV.</p>{% endif %}
+</div>
+{% endblock %}

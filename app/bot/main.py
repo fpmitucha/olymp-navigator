@@ -31,7 +31,8 @@ from aiogram.exceptions import (
 from aiogram.filters import Command, CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import (
-    BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+    BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message,
+    ReplyKeyboardMarkup, ReplyKeyboardRemove,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -423,6 +424,10 @@ class Views:
     def search(self, query: str, telegram_id: int) -> Screen:
         """Экран после поиска: одна олимпиада — сразу карточка, иначе список."""
         query = " ".join(query.split())[:MAX_QUERY]
+        try:
+            self.storage.log_search("bot", query, len(self.catalog.search(query, limit=60)), telegram_id)
+        except Exception:  # noqa: BLE001 — статистика не должна мешать поиску
+            log.exception("Не записался поисковый запрос")
         hits = self.catalog.search(query, limit=2)
         if len(hits) == 1:
             return self.card(hits[0].olympiad, telegram_id, Nav(a="card", o=hits[0].olympiad.id))
@@ -499,6 +504,31 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
         text, markup = views.menu()
         await message.answer(text, reply_markup=markup)
 
+    @router.message(Command("phone"))
+    async def ask_phone(message: Message) -> None:
+        await message.answer(texts.PHONE_ASK, reply_markup=phone_keyboard())
+
+    @router.message(F.contact)
+    async def got_contact(message: Message) -> None:
+        """Номер, которым поделились кнопкой: сохраняем только свой (не чужой контакт из книжки)."""
+        contact = message.contact
+        if message.from_user and contact.user_id == message.from_user.id:
+            phone = "+" + "".join(ch for ch in contact.phone_number if ch.isdigit())
+            storage.set_phone(message.from_user.id, phone)
+            await message.answer(texts.PHONE_SAVED, reply_markup=ReplyKeyboardRemove())
+            from app.config import settings
+
+            if settings.bot_admin_id and storage.recent_help_request(telegram_id=message.from_user.id):
+                who = f"@{message.from_user.username}" if message.from_user.username else f"id {message.from_user.id}"
+                storage.queue_message(settings.bot_admin_id,
+                                      f"📱 Номер к заявке на сопровождение от {texts.escape(who)}: {phone}")
+        else:
+            await message.answer(texts.PHONE_NOT_OWN, reply_markup=ReplyKeyboardRemove())
+
+    @router.message(F.text == texts.PHONE_SKIP)
+    async def skip_phone(message: Message) -> None:
+        await message.answer("Хорошо, без номера. Куратор напишет в Telegram.", reply_markup=ReplyKeyboardRemove())
+
     @router.message(F.text.regexp(r"(?i)^ошибка\b"))
     async def report_error(message: Message) -> None:
         from app.config import settings
@@ -558,6 +588,8 @@ def build_router(catalog: Catalog, storage: Storage, today: Callable[[], date],
             kb = InlineKeyboardBuilder()
             kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=Nav(a="menu").pack()))
             await show(callback, (texts.HELP_SENT, kb.as_markup()))
+            if not storage.user_info(user_id)["phone"]:
+                await callback.bot.send_message(user_id, texts.PHONE_ASK, reply_markup=phone_keyboard())
         elif nav.a == "subs":
             await show(callback, views.subs(user_id))
         elif nav.a == "lvl" and nav.q in LEVELS:
@@ -687,9 +719,29 @@ def make_sender(bot: Bot):
     return send
 
 
+def phone_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📱 Поделиться номером", request_contact=True)],
+                  [KeyboardButton(text=texts.PHONE_SKIP)]],
+        resize_keyboard=True, one_time_keyboard=True)
+
+
 def build_dispatcher(catalog: Catalog, storage: Storage, today: Callable[[], date] | None = None,
                      benefits: BenefitsCatalog | None = None) -> Dispatcher:
     dp = Dispatcher()
+
+    @dp.update.outer_middleware()
+    async def track_activity(handler, event, data):
+        """Статистика: @username и имя пользователя, активность в боте по дням."""
+        user = data.get("event_from_user")
+        if user is not None and not user.is_bot:
+            try:
+                storage.log_bot_user(user.id, user.username, user.first_name, user.last_name,
+                                     moscow_now().date().isoformat())
+            except Exception:  # noqa: BLE001
+                log.exception("Не записалась активность пользователя")
+        return await handler(event, data)
+
     dp.include_router(build_router(catalog, storage, today or (lambda: moscow_now().date()), benefits))
     return dp
 

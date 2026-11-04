@@ -15,7 +15,7 @@ try:
     from aiogram.client.session.base import BaseSession
     from aiogram.exceptions import TelegramBadRequest
     from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText, SendMessage
-    from aiogram.types import CallbackQuery, Chat, Message, Update, User
+    from aiogram.types import CallbackQuery, Chat, InlineKeyboardMarkup, Message, Update, User
 
     HAS_AIOGRAM = True
 except ImportError:  # pragma: no cover
@@ -45,7 +45,8 @@ if HAS_AIOGRAM:
                 self._next_id += 1
                 return Message(
                     message_id=self._next_id, date=datetime.now(), text=method.text,
-                    chat=Chat(id=method.chat_id, type="private"), reply_markup=method.reply_markup,
+                    chat=Chat(id=method.chat_id, type="private"),
+                reply_markup=method.reply_markup if isinstance(method.reply_markup, InlineKeyboardMarkup) else None,
                 )
             if type(method).__name__ == "SendDocument":
                 self._next_id += 1
@@ -379,12 +380,18 @@ class BotFlowTest(unittest.TestCase):
         menu = self.sent(self.feed(self.message("/start")))[0]
         offer = self.only_edit(self.feed(self.callback(self.button(menu, "🤝 Сопровождение"))))
         self.assertIn("Сопровождение до диплома", offer.text)
-        done = self.only_edit(self.feed(self.callback(self.button(offer, "✅ Оставить заявку"))))
+        calls = self.feed(self.callback(self.button(offer, "✅ Оставить заявку")))
+        done = self.edited(calls)[0]
         self.assertIn("Заявка отправлена", done.text)
+        ask = self.sent(calls)                                    # и просьба поделиться номером
+        self.assertEqual(len(ask), 1)
+        self.assertTrue(ask[0].reply_markup.keyboard[0][0].request_contact)
         self.feed(self.callback(self.button(offer, "✅ Оставить заявку")))  # повторное нажатие — без дубля
         again = self.only_edit(self.feed(self.callback(self.button(menu, "🤝 Сопровождение"))))
         self.assertIn("Заявка уже у нас", again.text)
         self.assertNotIn("✅ Оставить заявку", [label for label, _ in self.buttons(again)])
+        self.assertGreaterEqual(self.storage.query("SELECT actions FROM bot_activity WHERE telegram_id = ?",
+                                                   (USER_ID,))[0]["actions"], 3)       # активность для статистики
         deep = self.sent(self.feed(self.message("/start help")))[0]
         self.assertIn("Сопровождение до диплома", deep.text)
 

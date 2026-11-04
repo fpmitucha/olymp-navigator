@@ -199,6 +199,49 @@ CREATE TABLE IF NOT EXISTS uni_request (             -- «Предложить �
     status       TEXT NOT NULL DEFAULT 'new',    -- new | done
     created_at   TEXT NOT NULL
 );
+-- аналитика для админки
+CREATE TABLE IF NOT EXISTS pageview (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           TEXT NOT NULL,
+    day          TEXT NOT NULL,
+    visitor      TEXT NOT NULL,                 -- случайный id браузера (cookie bv_vid)
+    telegram_id  INTEGER,                       -- если вошёл на сайт
+    path         TEXT NOT NULL,
+    ref_host     TEXT NOT NULL DEFAULT '',
+    utm_source   TEXT NOT NULL DEFAULT '',
+    utm_campaign TEXT NOT NULL DEFAULT '',
+    device       TEXT NOT NULL DEFAULT ''       -- mobile | desktop
+);
+CREATE INDEX IF NOT EXISTS pageview_day_idx ON pageview (day);
+CREATE INDEX IF NOT EXISTS pageview_visitor_idx ON pageview (visitor);
+CREATE TABLE IF NOT EXISTS visitor (                -- первое касание: откуда пришёл
+    visitor      TEXT PRIMARY KEY,
+    first_ts     TEXT NOT NULL,
+    ref_host     TEXT NOT NULL DEFAULT '',
+    utm_source   TEXT NOT NULL DEFAULT '',
+    utm_campaign TEXT NOT NULL DEFAULT '',
+    telegram_id  INTEGER
+);
+CREATE TABLE IF NOT EXISTS bot_activity (           -- активность в боте по дням
+    telegram_id  INTEGER NOT NULL,
+    day          TEXT NOT NULL,
+    actions      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (telegram_id, day)
+);
+CREATE TABLE IF NOT EXISTS search_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           TEXT NOT NULL,
+    source       TEXT NOT NULL,                 -- site | bot
+    query        TEXT NOT NULL,
+    results      INTEGER NOT NULL,
+    telegram_id  INTEGER
+);
+CREATE TABLE IF NOT EXISTS auth_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           TEXT NOT NULL,
+    telegram_id  INTEGER NOT NULL,
+    visitor      TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS outbox (               -- сообщения с сайта, которые бот отправит в Telegram
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_id  INTEGER NOT NULL,
@@ -236,6 +279,8 @@ class Storage:
         self._migrate_stage_table()
         self.conn.executescript(SCHEMA)
         self._add_column("crm_olympiad", "plan", "TEXT NOT NULL DEFAULT '[]'")
+        for column in ("username", "first_name", "last_name", "phone", "phone_at", "last_seen"):
+            self._add_column("bot_user", column, "TEXT")
         self.conn.commit()
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
@@ -520,8 +565,14 @@ class Storage:
     def delete_user_data(self, telegram_id: int) -> None:
         """«Удалить мои данные» в кабинете: профиль, дипломы, подписки, сессии, заявки."""
         for table in ("user_diploma", "user_profile", "web_session", "subscription", "university_subscription",
-                      "help_request", "crm_client", "user_code", "outbox", "uni_request"):
+                      "help_request", "crm_client", "user_code", "outbox", "uni_request", "bot_activity", "search_log",
+                      "auth_log"):
             self.conn.execute(f"DELETE FROM {table} WHERE telegram_id = ?", (telegram_id,))  # noqa: S608
+        # просмотры остаются в статистике обезличенными
+        self.conn.execute("UPDATE pageview SET telegram_id = NULL WHERE telegram_id = ?", (telegram_id,))
+        self.conn.execute("UPDATE visitor SET telegram_id = NULL WHERE telegram_id = ?", (telegram_id,))
+        self.conn.execute("UPDATE bot_user SET username = NULL, first_name = NULL, last_name = NULL, phone = NULL, "
+                          "phone_at = NULL WHERE telegram_id = ?", (telegram_id,))
         self.conn.commit()
 
     def get_meta(self, key: str) -> str | None:
@@ -901,3 +952,57 @@ class Storage:
     def close_uni_requests(self, university: str) -> None:
         self.conn.execute("UPDATE uni_request SET status = 'done' WHERE lower(university) = lower(?)", (university,))
         self.conn.commit()
+
+    # -- аналитика ---------------------------------------------------------------
+
+    def log_bot_user(self, telegram_id: int, username: str | None, first_name: str | None,
+                     last_name: str | None, day: str) -> None:
+        """Каждое действие в боте: обновляем @username/имя и считаем активность за день."""
+        self.conn.execute(
+            "INSERT INTO bot_user (telegram_id, created_at, username, first_name, last_name, last_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (telegram_id) DO UPDATE SET username = excluded.username, "
+            "first_name = excluded.first_name, last_name = excluded.last_name, last_seen = excluded.last_seen",
+            (telegram_id, _now(), username, first_name, last_name, _now()))
+        self.conn.execute("INSERT INTO bot_activity (telegram_id, day, actions) VALUES (?, ?, 1) "
+                          "ON CONFLICT (telegram_id, day) DO UPDATE SET actions = actions + 1", (telegram_id, day))
+        self.conn.commit()
+
+    def set_phone(self, telegram_id: int, phone: str | None) -> None:
+        self.touch_user(telegram_id)
+        self.conn.execute("UPDATE bot_user SET phone = ?, phone_at = ? WHERE telegram_id = ?",
+                          (phone, _now() if phone else None, telegram_id))
+        self.conn.commit()
+
+    def user_info(self, telegram_id: int) -> dict:
+        row = self.conn.execute("SELECT username, first_name, last_name, phone FROM bot_user WHERE telegram_id = ?",
+                                (telegram_id,)).fetchone()
+        return dict(row) if row else {"username": None, "first_name": None, "last_name": None, "phone": None}
+
+    def log_pageview(self, *, visitor: str, telegram_id: int | None, path: str, ref_host: str, utm_source: str,
+                     utm_campaign: str, device: str, day: str) -> None:
+        self.conn.execute(
+            "INSERT INTO pageview (ts, day, visitor, telegram_id, path, ref_host, utm_source, utm_campaign, device) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), day, visitor, telegram_id, path[:300], ref_host[:100], utm_source[:60], utm_campaign[:60], device))
+        self.conn.execute(
+            "INSERT INTO visitor (visitor, first_ts, ref_host, utm_source, utm_campaign, telegram_id) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (visitor) DO UPDATE SET "
+            "telegram_id = coalesce(excluded.telegram_id, visitor.telegram_id)",
+            (visitor, _now(), ref_host[:100], utm_source[:60], utm_campaign[:60], telegram_id))
+        self.conn.commit()
+
+    def log_search(self, source: str, query: str, results: int, telegram_id: int | None = None) -> None:
+        self.conn.execute("INSERT INTO search_log (ts, source, query, results, telegram_id) VALUES (?, ?, ?, ?, ?)",
+                          (_now(), source, query[:100], results, telegram_id))
+        self.conn.commit()
+
+    def log_auth(self, telegram_id: int, visitor: str = "") -> None:
+        self.conn.execute("INSERT INTO auth_log (ts, telegram_id, visitor) VALUES (?, ?, ?)",
+                          (_now(), telegram_id, visitor))
+        if visitor:
+            self.conn.execute("UPDATE visitor SET telegram_id = ? WHERE visitor = ?", (telegram_id, visitor))
+        self.conn.commit()
+
+    def query(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Для отчётов статистики (только SELECT из кода сайта)."""
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]

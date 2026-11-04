@@ -137,3 +137,37 @@ class NewsWebTest(unittest.TestCase):
         self.admin.post("/admin/requests/done", data={"csrf": self.csrf, "university": "МИСИС"})
         self.assertNotIn("МИСИС", self.admin.get("/admin/requests").text)
         self.assertIn("Нет нужного вуза", self.anon.get("/universities").text)
+
+
+@unittest.skipUnless(HAS_WEB, "fastapi не установлен")
+class StatsWebTest(NewsWebTest):
+    def test_moderation_and_pages(self):  # проверено выше
+        pass
+
+    def test_suggest_university(self):
+        pass
+
+    def test_stats_and_users(self):
+        browser = TestClient(self.app)
+        ua = {"User-Agent": "Mozilla/5.0 (iPhone)"}
+        with self.app.state.db() as s:
+            before = s.query("SELECT count(*) AS n FROM pageview")[0]["n"]
+        browser.get("/?utm_source=vk&utm_campaign=sh2", headers=ua)
+        browser.get("/olympiads?q=Физтех", headers=ua, follow_redirects=False)
+        browser.get("/olympiads?q=несуществующая", headers=ua)
+        TestClient(self.app).get("/", headers={"User-Agent": "Googlebot"})     # боты не считаются
+        self.admin.get("/", headers=ua)                                          # и куратор тоже
+        with self.app.state.db() as s:
+            s.log_bot_user(55, "masha", "Маша", None, "2026-11-04")
+            s.set_phone(55, "+79000000000")
+            views = s.query("SELECT count(*) AS n FROM pageview")[0]["n"]
+        self.assertEqual(views - before, 2)      # главная и пустой поиск; редирект, бот и куратор — нет
+        page = self.admin.get("/admin/stats?days=7").text
+        self.assertIn("несуществующая", page)        # поиск без результатов
+        self.assertIn("sh2", page)                   # utm-кампания
+        self.assertIn("mobile", page)
+        users = self.admin.get("/admin/users").text
+        self.assertIn("@masha", users)
+        self.assertIn("+79000000000", users)
+        self.assertIn("masha", self.admin.get("/admin/users.csv").text)
+        self.assertEqual(TestClient(self.app).get("/admin/stats").status_code, 404)

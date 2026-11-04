@@ -540,3 +540,24 @@ details.more[open] summary { display: none; }
 .adm-news-item input { margin-top: 4px; width: 18px; height: 18px; flex: none; accent-color: var(--ink); }
 .adm-news-item > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .adm-card .stack label, .adm .stack > label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
+
+/* ───── статистика ───── */
+.st-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.st-cards div { padding: 14px 16px; border-radius: var(--radius); background: #fff; border: 1px solid var(--line); }
+.st-cards p { margin: 0; font-size: 13px; font-weight: 700; color: var(--muted); }
+.st-cards b { display: block; font: 600 26px var(--display); margin: 2px 0; }
+.st-cards span { font-size: 13px; color: var(--ink-2); }
+.st-chart { display: flex; align-items: flex-end; gap: 2px; height: 180px; border-bottom: 1px solid var(--line); }
+.st-col { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; gap: 1px; min-width: 2px; }
+.st-col span { flex: 1; border-radius: 2px 2px 0 0; min-height: 1px; }
+.st-web, .dot.st-web { background: var(--ink); }
+.st-bot, .dot.st-bot { background: var(--gold); }
+.st-axis { display: flex; justify-content: space-between; margin-top: 6px; }
+.st-funnel { display: grid; grid-template-columns: minmax(150px, 280px) 1fr 60px 44px; gap: 12px; align-items: center; padding: 6px 0; font-size: 14px; }
+.st-funnel .bar { height: 12px; border-radius: 6px; background: var(--paper-2); overflow: hidden; }
+.st-funnel .bar i { display: block; height: 100%; background: var(--gold); }
+.st-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 0 18px; }
+.st-grid .adm-table.flat table, .adm-card .cohort { min-width: 0; }
+.heat { display: inline-block; min-width: 42px; padding: 2px 6px; border-radius: 6px; text-align: center;
+  background: color-mix(in srgb, var(--gold) var(--p), #fff); }
+@media (max-width: 560px) { .st-grid { grid-template-columns: 1fr; } .st-funnel { grid-template-columns: 1fr 50px; } .st-funnel .bar, .st-funnel .muted { display: none; } }

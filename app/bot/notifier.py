@@ -306,6 +306,9 @@ def about_user(storage: Storage, catalog: Catalog, telegram_id: int | None) -> l
     if not telegram_id:
         return []
     lines = []
+    info = storage.user_info(telegram_id)
+    if info.get("phone"):
+        lines.append(f"Телефон: {info['phone']}")
     profile = storage.profile(telegram_id)
     if profile.get("grade"):
         lines.append(f"Класс (в кабинете): {profile['grade']}")
