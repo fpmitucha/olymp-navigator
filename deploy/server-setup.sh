@@ -26,6 +26,8 @@ if [ -f /tmp/.env ]; then
 fi
 [ -f .env ] || { echo "ОШИБКА: нет .env (TELEGRAM_BOT_TOKEN=...)"; exit 1; }
 grep -q '^WEB_SECRET=..' .env || echo "WEB_SECRET=$(openssl rand -hex 32)" >> .env
+# ключ шифрования доступов к кабинетам олимпиад (Fernet = 32 байта в base64url)
+grep -q '^CRM_KEY=..' .env || echo "CRM_KEY=$(openssl rand -base64 32 | tr '+/' '-_')" >> .env
 IP=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 # без домена — HTTPS-сертификат Let's Encrypt прямо на IP-адрес
 if ! grep -q '^DOMAIN=' .env && ! grep -q '^CADDYFILE=' .env; then

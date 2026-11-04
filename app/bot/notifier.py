@@ -381,11 +381,36 @@ async def send_outbox(storage: Storage, send: SendFn) -> int:
     return sent
 
 
-async def outbox_loop(db_path: str, send: SendFn, interval: float = 20) -> None:
-    """Сайт и бот — разные процессы с общей базой: раз в 20 секунд забираем очередь сообщений."""
+def crm_housekeeping(storage: Storage, catalog: Catalog, today: date, site_url: str = "") -> int:
+    """Напоминания клиентам ввести доступ к кабинету олимпиады (в очередь сообщений, без повторов)
+    и удаление доступов прошлого сезона 1 июля. Возвращает число новых напоминаний."""
+    from app import crm
+
+    queued = 0
+    for row_id, telegram_id, kind, text in crm.access_reminders(catalog, storage.crm_all_olympiads(), storage.stages,
+                                                                today, site_url):
+        if not storage.crm_reminder_sent(row_id, kind):
+            storage.queue_message(telegram_id, text)
+            queued += 1
+    if (today.month, today.day) >= (7, 1):
+        removed = storage.crm_purge_accesses(f"{today.year}-07-01")
+        if removed:
+            log.info("Удалено доступов прошлого сезона: %s", removed)
+    return queued
+
+
+async def outbox_loop(db_path: str, send: SendFn, catalog: Catalog | None = None, site_url: str = "",
+                      interval: float = 20, housekeeping_every: float = 60 * 60) -> None:
+    """Сайт и бот — разные процессы с общей базой: раз в 20 секунд забираем очередь сообщений,
+    раз в час — напоминания сопровождения (в тихие часы не шлём, отложим до утра)."""
+    last = 0.0
     while True:
         storage = Storage(db_path)
         try:
+            now = asyncio.get_running_loop().time()
+            if catalog is not None and now - last >= housekeeping_every and not is_quiet_time(moscow_now()):
+                crm_housekeeping(storage, catalog, moscow_now().date(), site_url)
+                last = now
             await send_outbox(storage, send)
         except Exception:  # noqa: BLE001
             log.exception("Сбой отправки очереди сообщений")

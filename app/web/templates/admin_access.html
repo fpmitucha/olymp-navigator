@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Доступы на проверке · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin">← Клиенты</a>
+  <div class="adm-head"><div>
+    <h1>Доступы на проверке</h1>
+    <p class="muted">Проверь вход на сайте олимпиады и отметь результат — клиенту придёт сообщение в Telegram.</p>
+  </div></div>
+  {% if not enabled %}<p class="form-error">Не задан CRM_KEY в .env — приём доступов выключен.</p>{% endif %}
+
+  {% for a in items %}
+  <article class="adm-card adm-acc">
+    <div>
+      <b>{{ short(a.olympiad) if a.olympiad else a.olympiad_id }}</b>{% if a.profile %}<span class="muted">, {{ a.profile }}</span>{% endif %}
+      <div class="small"><a href="/admin/client/{{ a.code }}">{{ a.name or 'Без имени' }}</a> · ID {{ a.code }} · введено {{ a.updated_at[:16]|replace('T', ' ') }} UTC</div>
+    </div>
+    <dl class="adm-cred">
+      <dt>Логин</dt><dd><code>{{ a.login }}</code></dd>
+      <dt>Пароль</dt><dd>{% if a.id in revealed %}<code>{{ revealed[a.id] }}</code>{% else %}
+        <form method="post" action="/admin/access/{{ a.id }}/reveal" class="adm-inline"><input type="hidden" name="csrf" value="{{ csrf }}"><code>••••••••</code> <button class="btn small ghost" type="submit">Показать</button></form>{% endif %}</dd>
+    </dl>
+    <div class="adm-inline">
+      <form method="post" action="/admin/access/{{ a.id }}/check"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="result" value="ok"><button class="btn small ok-btn" type="submit">Вход работает</button></form>
+      <form method="post" action="/admin/access/{{ a.id }}/check"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="result" value="bad"><button class="btn small ghost" type="submit">Не подходит</button></form>
+    </div>
+  </article>
+  {% else %}
+  <p class="muted">Очередь пуста — новых доступов нет.</p>
+  {% endfor %}
+
+  <p class="small muted">Пароли хранятся зашифрованными, каждый просмотр пишется в журнал. 1 июля доступы прошедшего сезона удаляются автоматически.</p>
+  <section class="adm-card">
+    <h2>Журнал</h2>
+    <ul class="adm-log">{% for e in log_rows %}<li><span class="muted small">{{ e.created_at[:16]|replace('T', ' ') }} UTC</span>{{ e.text }}</li>{% else %}<li class="muted small">Пока пусто</li>{% endfor %}</ul>
+  </section>
+</div>
+{% endblock %}

@@ -49,7 +49,7 @@
         <div class="rm-head"><h2>Олимпиады</h2>{% if client.notify %}<span class="muted small">смена статуса уходит клиенту в Telegram</span>{% else %}<span class="muted small">уведомления клиенту выключены</span>{% endif %}</div>
         <div class="adm-table flat">
           <table>
-            <thead><tr><th>Олимпиада</th><th>Льготы в целях</th><th>Статус</th><th>Регистрация до</th></tr></thead>
+            <thead><tr><th>Олимпиада</th><th>Льготы в целях</th><th>Статус</th><th>Регистрация до</th><th>Доступ</th></tr></thead>
             <tbody>
             {% for it in rm.items %}
               <tr>
@@ -64,7 +64,7 @@
                   <form method="post" action="{{ base }}/olympiads/{{ it.row_id }}/status">
                     <input type="hidden" name="csrf" value="{{ csrf }}">
                     <select class="field" name="status" aria-label="Статус" onchange="this.form.submit()">
-                      {% for key, v in statuses.items() %}<option value="{{ key }}" {% if key == it.status %}selected{% endif %}>{{ v[0] }}</option>{% endfor %}
+                      {% for key, label in it.options %}<option value="{{ key }}" {% if key == it.status_key %}selected{% endif %}>{{ label }}</option>{% endfor %}
                     </select>
                     <noscript><button class="btn small" type="submit">OK</button></noscript>
                   </form>
@@ -77,9 +77,10 @@
                   {% set waiting = it.status in ['todo', 'registration'] %}
                   <div class="small {{ 'warn' if waiting and not it.deadline else 'muted' }}">{% if it.deadline_manual %}задано вручную{% elif it.deadline %}с сайта олимпиады: {{ it.deadline.strftime('%d.%m.%Y') }}{% elif waiting %}нет даты — поставь вручную{% else %}уже не нужно{% endif %}</div>
                 </td>
+                <td class="small">{% if it.access == 'pending' %}<a class="tag gold" href="/admin/access">на проверке</a>{% elif it.access == 'ok' %}<span class="ok">проверен</span>{% elif it.access == 'bad' %}<span class="warn">не подошёл</span>{% elif it.needs_access %}<span class="muted">ждём{% if it.access_deadline %} до {{ it.access_deadline.strftime('%d.%m') }}{% endif %}</span>{% else %}—{% endif %}</td>
               </tr>
             {% else %}
-              <tr><td colspan="4" class="muted">Олимпиад пока нет — найди ниже.</td></tr>
+              <tr><td colspan="5" class="muted">Олимпиад пока нет — найди ниже.</td></tr>
             {% endfor %}
             </tbody>
           </table>

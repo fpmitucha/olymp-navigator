@@ -43,6 +43,8 @@ class Settings:
     bot_admin_id: int = int(os.environ.get("BOT_ADMIN_ID", "0") or 0)
     # Адрес сайта для ссылок в сообщениях бота: https://bvishechka.ru или https://<IP>; пусто — без ссылок
     site_url: str = os.environ.get("SITE_URL", "").rstrip("/")
+    # Ключ шифрования логинов и паролей клиентов (Fernet); server-setup.sh создаёт его сам. Сменишь — старые не прочитать
+    crm_key: str = os.environ.get("CRM_KEY", "")
     telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")
     # Раз в сутки забирать даты этапов с olimpiada.ru, пока работает бот
     stages_autosync: bool = os.environ.get("STAGES_AUTOSYNC", "1").strip().lower() not in ("0", "false", "no")

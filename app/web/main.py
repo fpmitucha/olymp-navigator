@@ -118,7 +118,7 @@ def strongest_routes(benefits: BenefitsCatalog, catalog: Catalog, limit: int = 6
 
 def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Path | str | None = None,
                today: Callable[[], date] = date.today, secret: str = "", admin_id: int = 0,
-               site_url: str = "") -> FastAPI:
+               site_url: str = "", crm_key: str = "") -> FastAPI:
     app = FastAPI(title="Бвишечка", docs_url="/api/docs", redoc_url=None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     app.mount("/assets", StaticFiles(directory=HERE.parent / "assets"), name="assets")
@@ -179,15 +179,18 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     def render(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
         user = current_user(request)
         name = ""
+        pending_access = 0
         if user:
             with db() as s:
                 name = s.profile(user)["name"]
+                if admin_id and user == admin_id:
+                    pending_access = len(s.crm_accesses(status="pending"))
         base = dict(
             request=request, bot_url=BOT_URL, admission_year=admission_year, current_year=catalog.current_year,
             benefit_types=BENEFIT_TYPES, diplomas=DIPLOMAS, uni_slug=uni_slug, levels_label=levels_label,
             olympiad_count=olympiad_count, university_count=len(universities), user=user, user_name=name,
             csrf=csrf_token(request) if user else "", short=short, diploma_years=diploma_years,
-            is_admin=bool(admin_id) and user == admin_id,
+            is_admin=bool(admin_id) and user == admin_id, pending_access=pending_access,
         )
         return templates.TemplateResponse(request, template, {**base, **context}, status_code=status_code)
 
@@ -320,7 +323,12 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         for u in universities:
             counts = Counter(r.benefit for r in u.rules)
             rows.append((u, counts, len({r.olympiad.id for r in u.rules})))
-        return render(request, "universities.html", rows=rows)
+        user = current_user(request)
+        following = set()
+        if user:
+            with db() as s:
+                following = set(s.university_subscriptions(user))
+        return render(request, "universities.html", rows=rows, following=following)
 
     @app.get("/university/{university_slug}", response_class=HTMLResponse)
     def university(request: Request, university_slug: str):
@@ -555,6 +563,17 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                         s.unsubscribe(user, sid)
         return back(request, f"/olympiad/{o.id}")
 
+    @app.post("/me/universities")
+    def me_add_university(request: Request, csrf: str = Form(""), university: str = Form("")):
+        """Добавить вуз в цели прямо из кабинета (список вузов)."""
+        user = check_csrf(request, csrf)
+        u = benefits.get(university)
+        if u is None:
+            raise HTTPException(404, "Вуз не найден")
+        with db() as s:
+            s.subscribe_university(user, u.university)
+        return RedirectResponse("/me#targets", status_code=303)
+
     @app.post("/me/universities/{university_slug}")
     def me_follow_university(request: Request, university_slug: str, csrf: str = Form(""),
                              action: str = Form("follow")):
@@ -584,8 +603,18 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
 
     from app import crm
 
+    from app.secretbox import SecretBox
+
+    box = SecretBox(crm_key)
+
     def roadmap_for(s: Storage, user: int) -> crm.Roadmap:
-        return crm.build_roadmap(catalog, benefits, s.crm_goals(user), s.crm_olympiads(user), s.stages, today())
+        accesses = {a["crm_olympiad"]: a["status"] for a in s.crm_accesses(user)}
+        rm = crm.build_roadmap(catalog, benefits, s.crm_goals(user), s.crm_olympiads(user), s.stages, today(),
+                               accesses)
+        for it in rm.items:
+            if it.plan_changed is not None:
+                s.crm_save_plan(it.row_id, it.plan_changed)   # прошедшие этапы не теряются
+        return rm
 
     def upcoming_for(s: Storage, rm: crm.Roadmap, limit: int = 6) -> list[tuple[date, str, str]]:
         """Ближайшие даты плана: (дата, что, олимпиада) — конец регистрации и этапы с сайтов олимпиад."""
@@ -594,9 +623,11 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             name = short(it.olympiad)
             if it.status in crm.DEADLINE_STATUSES and it.deadline and it.deadline >= today():
                 found.append((it.deadline, "конец регистрации", name))
-            if it.status in ("todo", "registration", "registered", "qualifying", "passed", "final"):
-                for st in s.upcoming_stages(it.olympiad.id, today(), limit=3):
-                    if st.kind != "registration" and (not st.profile or st.profile == it.profile):
+            if it.needs_access and it.access_deadline and it.access_deadline >= today():
+                found.append((it.access_deadline, "ввести доступ к кабинету", name))
+            if it.status_key not in crm.RESULT_STATUSES and not it.status_key.startswith("f"):
+                for st in s.upcoming_stages(it.olympiad.id, today(), limit=4):
+                    if st.kind != "registration" and crm.stage_fits(st.profile, it.profile):
                         found.append((st.starts_at or st.ends_at, st.title or st.kind_label, name))
         return sorted({f for f in found if f[0]})[:limit]
 
@@ -608,7 +639,9 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             rm = roadmap_for(s, user)
             upcoming = upcoming_for(s, rm)
         return render(request, "roadmap.html", client=client, rm=rm, upcoming=upcoming, shared=shared,
-                      today=today(), benefit_short=crm.BENEFIT_SHORT, site_url=site_url)
+                      today=today(), benefit_short=crm.BENEFIT_SHORT, site_url=site_url,
+                      access_labels=crm.ACCESS_LABELS, access_enabled=box.enabled,
+                      access_error=request.query_params.get("access_error", ""))
 
     @app.get("/me/roadmap", response_class=HTMLResponse)
     def me_roadmap(request: Request):
@@ -627,6 +660,34 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             raise HTTPException(404, "Ссылка не найдена")
         page.headers["X-Robots-Tag"] = "noindex"
         return page
+
+    @app.post("/me/roadmap/{row_id}/access")
+    def me_save_access(request: Request, row_id: int, csrf: str = Form(""), login: str = Form(""),
+                       password: str = Form(""), consent: str = Form("")):
+        """Клиент вводит логин и пароль от кабинета олимпиады — они уходят куратору на проверку."""
+        user = check_csrf(request, csrf)
+        login, password = login.strip()[:200], password.strip()[:200]
+        if not box.enabled:
+            raise HTTPException(503, "Приём доступов пока не настроен")
+        if not login or not password or not consent:
+            return RedirectResponse(f"/me/roadmap?access_error={row_id}#o{row_id}", status_code=303)
+        with db() as s:
+            if s.crm_client(user) is None or s.crm_olympiad(user, row_id) is None:
+                raise HTTPException(404, "Олимпиада не найдена")
+            s.crm_save_access(user, row_id, box.seal(login), box.seal(password))
+            row = s.crm_olympiad(user, row_id)
+            o = catalog.get(row["olympiad_id"])
+            s.crm_log(user, f"Клиент ввёл доступ: {short(o) if o else row['olympiad_id']}")
+        return RedirectResponse(f"/me/roadmap#o{row_id}", status_code=303)
+
+    @app.post("/me/roadmap/{row_id}/access/delete")
+    def me_delete_access(request: Request, row_id: int, csrf: str = Form("")):
+        user = check_csrf(request, csrf)
+        with db() as s:
+            s.crm_delete_access(user, row_id)
+            if s.crm_client(user):
+                s.crm_log(user, "Клиент удалил доступ к кабинету")
+        return RedirectResponse(f"/me/roadmap#o{row_id}", status_code=303)
 
     def require_admin(request: Request) -> int:
         user = current_user(request)
@@ -659,6 +720,10 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                 out.append(f"регистрация на {short(it.olympiad)} до {it.deadline:%d.%m}")
             elif it.deadline is None and it.status == "registration":
                 out.append(f"нет даты регистрации: {short(it.olympiad)}")
+            if it.access == "pending":
+                out.append(f"проверить доступ: {short(it.olympiad)}")
+            elif it.needs_access and it.access_deadline and (it.access_deadline - today()).days <= 3:
+                out.append(f"нет доступа к кабинету: {short(it.olympiad)}")
         return out
 
     @app.get("/admin", response_class=HTMLResponse)
@@ -730,7 +795,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                         for u in universities}
         return render(request, "admin_client.html", client=client, rm=rm, events=events, groups=groups,
                       q=q, hits=hits, suggestions=crm.suggestions(catalog, benefits, goals, taken),
-                      statuses=crm.STATUSES, uni_programs=uni_programs, benefit_short=crm.BENEFIT_SHORT,
+                      uni_programs=uni_programs, access_labels=crm.ACCESS_LABELS, benefit_short=crm.BENEFIT_SHORT,
                       site_url=site_url, today=today(), attention=attention(rm))
 
     @app.post("/admin/client/{code}/settings")
@@ -789,19 +854,21 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     @app.post("/admin/client/{code}/olympiads/{row_id}/status")
     def admin_set_status(request: Request, code: str, row_id: int, csrf: str = Form(""), status: str = Form("")):
         admin_post(request, csrf)
-        if status not in crm.STATUSES:
+        if not crm.valid_status(status):
             raise HTTPException(422, "Нет такого статуса")
         with db() as s:
             user = client_by_code(s, code)
             row = s.crm_olympiad(user, row_id)
             if row is None:
                 raise HTTPException(404, "Олимпиада не найдена")
-            if row["status"] != status:
+            item = next((it for it in roadmap_for(s, user).items if it.row_id == row_id), None)
+            n = item.n if item else 1
+            if crm.normalize_status(row["status"], n) != status:
                 s.crm_set_status(user, row_id, status)
                 o = catalog.get(row["olympiad_id"])
                 name = short(o) if o else row["olympiad_id"]
-                s.crm_log(user, f"{name}: {crm.STATUSES[row['status']][0]} → {crm.STATUSES[status][0]}")
-                notify(s, user, crm.status_message(name, row["profile"], status, site_url))
+                s.crm_log(user, f"{name}: {crm.status_label(row['status'], n)} → {crm.status_label(status, n)}")
+                notify(s, user, crm.status_message(name, row["profile"], status, n, site_url))
         return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
 
     @app.post("/admin/client/{code}/olympiads/{row_id}/deadline")
@@ -847,6 +914,58 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         with db() as s:
             s.crm_disable(client_by_code(s, code))
         return RedirectResponse("/admin", status_code=303)
+
+    @app.get("/admin/access", response_class=HTMLResponse)
+    def admin_access(request: Request, show: int = 0):
+        """Очередь доступов на проверку. Пароль виден только после «Показать» (POST) — и это пишется в журнал."""
+        require_admin(request)
+        with db() as s:
+            pending = s.crm_accesses(status="pending")
+            log_rows = s.crm_access_log()
+        items = []
+        for a in pending:
+            o = catalog.get(a["olympiad_id"])
+            items.append(dict(a, olympiad=o, login=box.open(a["login_enc"]) if box.enabled else "—"))
+        return render(request, "admin_access.html", items=items, log_rows=log_rows, enabled=box.enabled,
+                      revealed={})
+
+    @app.post("/admin/access/{access_id}/reveal", response_class=HTMLResponse)
+    def admin_access_reveal(request: Request, access_id: int, csrf: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            a = s.crm_access(access_id)
+            if a is None or not box.enabled:
+                raise HTTPException(404, "Доступ не найден")
+            o = catalog.get(a["olympiad_id"])
+            s.crm_access_log_add(a["telegram_id"], f"просмотрен пароль: {a['name'] or a['code']}, "
+                                                   f"{short(o) if o else a['olympiad_id']}")
+            pending = s.crm_accesses(status="pending")
+            log_rows = s.crm_access_log()
+        items = [dict(x, olympiad=catalog.get(x["olympiad_id"]), login=box.open(x["login_enc"])) for x in pending]
+        if a["status"] != "pending":
+            items.insert(0, dict(a, olympiad=o, login=box.open(a["login_enc"])))
+        response = render(request, "admin_access.html", items=items, log_rows=log_rows, enabled=True,
+                          revealed={access_id: box.open(a["password_enc"])})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/admin/access/{access_id}/check")
+    def admin_access_check(request: Request, access_id: int, csrf: str = Form(""), result: str = Form("")):
+        admin_post(request, csrf)
+        if result not in ("ok", "bad"):
+            raise HTTPException(422, "ok или bad")
+        with db() as s:
+            a = s.crm_access(access_id)
+            if a is None:
+                raise HTTPException(404, "Доступ не найден")
+            s.crm_set_access_status(access_id, result)
+            o = catalog.get(a["olympiad_id"])
+            name = short(o) if o else a["olympiad_id"]
+            s.crm_access_log_add(a["telegram_id"], f"{'проверен' if result == 'ok' else 'не подошёл'}: "
+                                                   f"{a['name'] or a['code']}, {name}")
+            s.crm_log(a["telegram_id"], f"Доступ к кабинету {name}: {'работает' if result == 'ok' else 'не подошёл'}")
+            notify(s, a["telegram_id"], crm.access_message(name, result == "ok", site_url))
+        return RedirectResponse("/admin/access", status_code=303)
 
     # -- JSON ------------------------------------------------------------------
 

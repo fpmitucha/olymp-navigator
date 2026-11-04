@@ -151,6 +151,29 @@ CREATE TABLE IF NOT EXISTS crm_event (
     text         TEXT NOT NULL,
     created_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS crm_access (            -- логин и пароль от кабинета олимпиады (зашифрованы)
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id    INTEGER NOT NULL REFERENCES crm_client(telegram_id) ON DELETE CASCADE,
+    crm_olympiad   INTEGER NOT NULL UNIQUE REFERENCES crm_olympiad(id) ON DELETE CASCADE,
+    login_enc      TEXT NOT NULL,
+    password_enc   TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending',   -- pending | ok | bad
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    checked_at     TEXT
+);
+CREATE TABLE IF NOT EXISTS crm_access_log (        -- кто и когда смотрел пароль
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id  INTEGER NOT NULL,
+    text         TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS crm_reminder (          -- отправленные напоминания сопровождения (без повторов)
+    crm_olympiad  INTEGER NOT NULL,
+    kind          TEXT NOT NULL,
+    sent_at       TEXT NOT NULL,
+    PRIMARY KEY (crm_olympiad, kind)
+);
 CREATE TABLE IF NOT EXISTS outbox (               -- сообщения с сайта, которые бот отправит в Telegram
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_id  INTEGER NOT NULL,
@@ -187,7 +210,14 @@ class Storage:
             self.conn.execute("PRAGMA journal_mode = WAL")
         self._migrate_stage_table()
         self.conn.executescript(SCHEMA)
+        self._add_column("crm_olympiad", "plan", "TEXT NOT NULL DEFAULT '[]'")
         self.conn.commit()
+
+    def _add_column(self, table: str, column: str, decl: str) -> None:
+        """Новая колонка в таблице из прошлой версии (CREATE TABLE IF NOT EXISTS её не добавит)."""
+        columns = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")  # noqa: S608
 
     def _migrate_stage_table(self) -> None:
         """База первой версии бота: у stage не было external_id, а UNIQUE был на всей таблице.
@@ -633,7 +663,7 @@ class Storage:
 
     def crm_olympiads(self, telegram_id: int) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, olympiad_id, profile, status, reg_deadline, updated_at FROM crm_olympiad "
+            "SELECT id, olympiad_id, profile, status, reg_deadline, plan, updated_at FROM crm_olympiad "
             "WHERE telegram_id = ? ORDER BY id", (telegram_id,)).fetchall()
         return [dict(r, reg_deadline=_date(r["reg_deadline"])) for r in rows]
 
@@ -688,3 +718,73 @@ class Storage:
     def mark_message_sent(self, message_id: int) -> None:
         self.conn.execute("UPDATE outbox SET sent_at = ? WHERE id = ?", (_now(), message_id))
         self.conn.commit()
+
+    def crm_save_plan(self, row_id: int, plan: str) -> None:
+        """Снимок этапов олимпиады: прошедшие этапы пропадают с сайта, а в роадмапе должны остаться."""
+        self.conn.execute("UPDATE crm_olympiad SET plan = ? WHERE id = ?", (plan, row_id))
+        self.conn.commit()
+
+    # -- доступы к кабинетам олимпиад --------------------------------------
+
+    def crm_accesses(self, telegram_id: int | None = None, status: str | None = None) -> list[dict]:
+        sql = ("SELECT a.*, o.olympiad_id, o.profile, uc.code, p.name FROM crm_access a "
+               "JOIN crm_olympiad o ON o.id = a.crm_olympiad "
+               "LEFT JOIN user_code uc ON uc.telegram_id = a.telegram_id "
+               "LEFT JOIN user_profile p ON p.telegram_id = a.telegram_id WHERE 1 = 1")
+        params: list = []
+        if telegram_id is not None:
+            sql += " AND a.telegram_id = ?"
+            params.append(telegram_id)
+        if status:
+            sql += " AND a.status = ?"
+            params.append(status)
+        return [dict(r) for r in self.conn.execute(sql + " ORDER BY a.updated_at", params).fetchall()]
+
+    def crm_access(self, access_id: int) -> dict | None:
+        rows = [a for a in self.crm_accesses() if a["id"] == access_id]
+        return rows[0] if rows else None
+
+    def crm_save_access(self, telegram_id: int, row_id: int, login_enc: str, password_enc: str) -> None:
+        self.conn.execute(
+            "INSERT INTO crm_access (telegram_id, crm_olympiad, login_enc, password_enc, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT (crm_olympiad) DO UPDATE SET "
+            "login_enc = excluded.login_enc, password_enc = excluded.password_enc, status = 'pending', "
+            "updated_at = excluded.updated_at, checked_at = NULL",
+            (telegram_id, row_id, login_enc, password_enc, _now(), _now()))
+        self.conn.commit()
+
+    def crm_delete_access(self, telegram_id: int, row_id: int) -> None:
+        self.conn.execute("DELETE FROM crm_access WHERE telegram_id = ? AND crm_olympiad = ?", (telegram_id, row_id))
+        self.conn.commit()
+
+    def crm_set_access_status(self, access_id: int, status: str) -> None:
+        self.conn.execute("UPDATE crm_access SET status = ?, checked_at = ? WHERE id = ?", (status, _now(), access_id))
+        self.conn.commit()
+
+    def crm_purge_accesses(self, before: str) -> int:
+        """Удалить доступы, введённые раньше даты (ISO): конец сезона."""
+        cur = self.conn.execute("DELETE FROM crm_access WHERE created_at < ?", (before,))
+        self.conn.commit()
+        return cur.rowcount
+
+    def crm_access_log_add(self, telegram_id: int, text: str) -> None:
+        self.conn.execute("INSERT INTO crm_access_log (telegram_id, text, created_at) VALUES (?, ?, ?)",
+                          (telegram_id, text, _now()))
+        self.conn.commit()
+
+    def crm_access_log(self, limit: int = 30) -> list[dict]:
+        rows = self.conn.execute("SELECT text, created_at FROM crm_access_log ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
+    def crm_all_olympiads(self) -> list[dict]:
+        """Олимпиады всех клиентов (для напоминаний)."""
+        rows = self.conn.execute(
+            "SELECT o.id, o.telegram_id, o.olympiad_id, o.profile, o.status, o.reg_deadline, o.plan, "
+            "a.status AS access FROM crm_olympiad o LEFT JOIN crm_access a ON a.crm_olympiad = o.id").fetchall()
+        return [dict(r, reg_deadline=_date(r["reg_deadline"])) for r in rows]
+
+    def crm_reminder_sent(self, row_id: int, kind: str) -> bool:
+        cur = self.conn.execute("INSERT OR IGNORE INTO crm_reminder (crm_olympiad, kind, sent_at) VALUES (?, ?, ?)",
+                                (row_id, kind, _now()))
+        self.conn.commit()
+        return cur.rowcount == 0

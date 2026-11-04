@@ -411,7 +411,7 @@ details.more[open] summary { display: none; }
 .rm-status { padding: 5px 12px; border-radius: 999px; font-weight: 700; font-size: 13px; background: var(--paper-2); color: var(--ink-2); }
 .rm-status.gold { background: var(--gold-soft); color: #7a5a12; }
 .rm-status.alert { background: var(--ink); color: #fff; }
-.rm-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rm-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 .rm-steps li { position: relative; display: flex; flex-direction: column; gap: 2px; padding-right: 8px; font-size: 14px; }
 .rm-steps li::after { content: ""; position: absolute; left: 30px; right: 6px; top: 11px; height: 3px; border-radius: 2px; background: var(--line); }
 .rm-steps li:last-child::after { display: none; }
@@ -437,8 +437,8 @@ details.more[open] summary { display: none; }
 .rm-ask p { margin: 0 0 12px; color: var(--ink-2); }
 @media (max-width: 560px) {
   .rm-hero h1 { font-size: 26px; }
-  .rm-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
-  .rm-steps li:nth-child(2)::after { display: none; }
+  .rm-steps { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+  .rm-steps li:nth-child(2n)::after { display: none; }
 }
 
 /* ───── админка сопровождения ───── */
@@ -491,3 +491,28 @@ details.more[open] summary { display: none; }
 .adm-card .stack .check { color: var(--ink-2); font-size: 14px; align-items: center; }
 .adm-table.flat table { min-width: 680px; }
 @media (max-width: 860px) { .rm .rm-side { order: -1; } }
+.rm-access { border-top: 1px dashed var(--line); padding-top: 12px; }
+.rm-access p { margin: 0 0 6px; }
+.rm-access.bad > p:first-child, .rm-access.none > p:first-child { color: var(--ink); }
+.rm-access.ok b { color: #1a6b45; }
+.rm-access.pending b { color: var(--gold-deep); }
+.rm-access details > summary { list-style: none; display: inline-flex; cursor: pointer; }
+.rm-access details > summary::-webkit-details-marker { display: none; }
+.rm-access-actions { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.rm-access-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; max-width: 460px; }
+.rm-access-form label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 14px; }
+.rm-access-form .rm-consent { flex-direction: row; gap: 8px; align-items: flex-start; font-weight: 500; color: var(--ink-2); }
+.rm-access-form .rm-consent input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--ink); }
+.rm-warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--gold-soft); color: #5c430c; font-size: 14px; }
+.rm-safe { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.adm-acc { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; justify-content: space-between; }
+.adm-cred { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
+.adm-cred dt { color: var(--muted); }
+.adm-cred dd { margin: 0; }
+.adm-cred .adm-inline { margin: 0; }
+.ok-btn { background: var(--bvi); }
+.tag.gold { background: var(--gold-soft); color: #7a5a12; text-decoration: none; }
+@media (max-width: 860px) { .journey .road { display: none; } }
+.add-goal { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.add-goal .field { flex: 1 1 220px; max-width: 360px; }
+.list .side form { margin-top: 6px; display: inline-block; }

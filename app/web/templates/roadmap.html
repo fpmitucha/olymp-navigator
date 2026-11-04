@@ -2,6 +2,20 @@
 {% from "_macros.html" import plural, days_left %}
 {% block title %}Роадмап · Бвишечка{% endblock %}
 {% block head %}{% if shared %}<meta name="robots" content="noindex">{% endif %}{% endblock %}
+{% macro access_form(it) %}
+<form class="rm-access-form" method="post" action="/me/roadmap/{{ it.row_id }}/access">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Логин или e-mail от кабинета олимпиады<input class="field" name="login" autocomplete="off" maxlength="200" required></label>
+  <label>Пароль<input class="field" type="password" name="password" autocomplete="new-password" maxlength="200" required></label>
+  <p class="rm-warn">Не вводи пароли от Госуслуг, почты, Яндекс ID и VK ID — только от кабинета самой олимпиады. Если олимпиада входит через них, напиши куратору.</p>
+  <ul class="rm-safe">
+    <li>Хранится зашифрованным, видит только куратор</li>
+    <li>Можно изменить или удалить в любой момент; после сезона удаляем сами</li>
+  </ul>
+  <label class="rm-consent"><input type="checkbox" name="consent" value="1" required> Согласен(на) на обработку данных. Если тебе нет 14 лет — заполняет родитель.</label>
+  <button class="btn" type="submit">Отправить на проверку</button>
+</form>
+{% endmacro %}
 {% block main %}
 <div class="wrap rm">
   {% if not shared %}
@@ -59,7 +73,7 @@
         <div class="rm-legend"><span><i class="dot d"></i>сделано</span><span><i class="dot n"></i>в работе</span><span><i class="dot x"></i>впереди</span></div>
       </div>
       {% for it in rm.items %}
-      <article class="rm-item">
+      <article class="rm-item" id="o{{ it.row_id }}">
         <div class="rm-item-head">
           <div><h3>{{ short(it.olympiad) }}</h3>{% if it.profile %}<p class="muted small">{{ it.profile }}</p>{% endif %}</div>
           <span class="rm-status {{ it.tone }}">{{ it.label }}</span>
@@ -69,13 +83,34 @@
           <li class="st-{{ st.state }}">
             <span class="node" aria-hidden="true">{% if st.state == 'd' %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>{% elif st.state == 'f' %}×{% endif %}</span>
             <b>{{ st.name }}</b>
-            <span class="st-note">{% if loop.first and it.deadline and it.status in ['todo', 'registration'] %}до {{ it.deadline.strftime('%d.%m') }}{% elif st.state == 'd' %}готово{% elif st.state == 'n' %}сейчас{% elif st.state == 'f' %}не пройден{% endif %}</span>
+            <span class="st-note">{% if st.state == 'd' %}готово{% elif st.state == 'f' %}не пройден{% elif st.state == 's' %}—{% elif st.when %}{{ st.when }}{% elif st.state == 'n' %}сейчас{% endif %}</span>
           </li>
           {% endfor %}
         </ol>
         {% if it.benefits %}
         <div class="pills">
           {% for uni, b, who in it.benefits %}<span class="pill {{ b }}">{{ uni }} · {{ benefit_short[b] }}{% if who == 'winner' %} победителю{% endif %}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if not shared and access_enabled and (it.needs_access or it.access) and it.status_key not in ['winner', 'prize', 'participant'] %}
+        <div class="rm-access {{ it.access or 'none' }}">
+          {% if it.access in ['pending', 'ok'] %}
+          <p>Доступ к кабинету олимпиады: <b>{{ access_labels[it.access] }}</b></p>
+          <div class="rm-access-actions">
+            <details><summary class="linkbtn">Изменить</summary>{{ access_form(it) }}</details>
+            <form method="post" action="/me/roadmap/{{ it.row_id }}/access/delete" onsubmit="return confirm('Удалить логин и пароль?')">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><button class="linkbtn" type="submit">Удалить</button>
+            </form>
+          </div>
+          {% else %}
+          <p><b>{% if it.access == 'bad' %}Логин или пароль не подошли — введи заново{% else %}Нужен доступ к кабинету олимпиады{% endif %}</b>{% if it.access_deadline %} · до {{ it.access_deadline.strftime('%d.%m') }}{% endif %}</p>
+          <p class="small muted">Куратор зарегистрирует тебя и будет следить за этапами в кабинете.</p>
+          <details {% if access_error == it.row_id|string %}open{% endif %}>
+            <summary class="btn small">Ввести логин и пароль</summary>
+            {% if access_error == it.row_id|string %}<p class="form-error">Заполни логин и пароль и отметь согласие.</p>{% endif %}
+            {{ access_form(it) }}
+          </details>
+          {% endif %}
         </div>
         {% endif %}
       </article>

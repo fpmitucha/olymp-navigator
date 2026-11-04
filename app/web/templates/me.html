@@ -27,7 +27,7 @@
         <h3>Вузы-цели</h3>
         <ul class="stops goals">
           {% for u, best in targets[:4] %}<li><b>{{ u.university }}</b>{% if best %}{{ badge(best) }} по твоим дипломам{% else %}<span class="muted">пока нет льгот по твоим дипломам</span>{% endif %}</li>{% endfor %}
-          {% if not targets %}<li class="empty">Добавь вузы, куда хочешь поступить: <a href="/universities">выбрать</a></li>{% endif %}
+          {% if not targets %}<li class="empty">Добавь вузы, куда хочешь поступить: <a href="#targets">выбрать</a></li>{% endif %}
         </ul>
       </div>
     </div>
@@ -69,6 +69,15 @@
     {% else %}
     <p class="muted">Добавь вузы, куда хочешь поступить, — покажем, где твои дипломы дают льготы, и напишем в боте, когда вуз выложит правила на {{ admission_year }}.</p>
     {% endfor %}
+    {% set chosen = targets|map(attribute=0)|map(attribute='university')|list %}
+    <form class="add-goal" method="post" action="/me/universities">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <select class="field" name="university" aria-label="Вуз" required>
+        <option value="">Выбери вуз…</option>
+        {% for u in all_universities if u.university not in chosen %}<option>{{ u.university }}</option>{% endfor %}
+      </select>
+      <button class="btn" type="submit">Добавить в цели</button>
+    </form>
   </section>
 
   <section class="me-section" id="olympiads">

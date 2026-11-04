@@ -608,7 +608,8 @@ def cmd_web_run(args: argparse.Namespace) -> int:
         return 1
     catalog = _catalog()
     app = create_app(catalog, _benefits(catalog, strict=False), storage_path=settings.bot_db_path,
-                     secret=settings.web_secret, admin_id=settings.bot_admin_id, site_url=settings.site_url)
+                     secret=settings.web_secret, admin_id=settings.bot_admin_id, site_url=settings.site_url,
+                     crm_key=settings.crm_key)
     print(f"Сайт: http://{args.host}:{args.port}  (остановка — Ctrl+C)")
     # за обратным прокси (Caddy/nginx) доверяем X-Forwarded-Proto — иначе cookie входа не получит флаг Secure
     uvicorn.run(app, host=args.host, port=args.port, log_level="info", proxy_headers=True,
