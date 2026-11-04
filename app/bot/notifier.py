@@ -61,20 +61,35 @@ STAGES_SYNC_EVERY = timedelta(hours=20)
 STAGES_SYNC_KEY = "stages_synced_at"
 
 
-async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: float = 60 * 60) -> None:
-    """Раз в сутки забирает даты этапов с olimpiada.ru. Синхронизация идёт в отдельном потоке
-    со своим подключением к базе, чтобы бот продолжал отвечать."""
+STAGES_SYNC_REQUEST = "stages_sync_request"   # куратор нажал «Обновить даты сейчас»
+STAGES_SYNC_STATE = "stages_sync_state"       # что сейчас с синхронизацией — показываем в админке
+
+
+async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: float = 5 * 60) -> None:
+    """Раз в сутки (или по кнопке в админке) забирает даты этапов с olimpiada.ru. Синхронизация идёт
+    в отдельном потоке со своим подключением к базе, чтобы бот продолжал отвечать."""
     from app.stages_sync import sync_stages
+
+    def stamp() -> str:
+        return moscow_now().strftime("%d.%m %H:%M")
 
     def run_sync() -> str:
         storage = Storage(db_path)
         try:
             last = storage.get_meta(STAGES_SYNC_KEY)
+            forced = bool(storage.get_meta(STAGES_SYNC_REQUEST))
             now = datetime.now(timezone.utc)
-            if last and now - datetime.fromisoformat(last) < STAGES_SYNC_EVERY:
+            if not forced and last and now - datetime.fromisoformat(last) < STAGES_SYNC_EVERY:
                 return ""
-            report = sync_stages(catalog, storage, fetch, moscow_now().date())
+            storage.set_meta(STAGES_SYNC_REQUEST, "")
+            storage.set_meta(STAGES_SYNC_STATE, f"идёт с {stamp()} (первый раз — до часа)")
+            try:
+                report = sync_stages(catalog, storage, fetch, moscow_now().date())
+            except Exception as exc:
+                storage.set_meta(STAGES_SYNC_STATE, f"ошибка {stamp()}: {exc}"[:300])
+                raise
             storage.set_meta(STAGES_SYNC_KEY, now.isoformat(timespec="seconds"))
+            storage.set_meta(STAGES_SYNC_STATE, f"готово {stamp()}: {report.summary()}"[:300])
             return report.summary()
         finally:
             storage.close()
@@ -84,7 +99,7 @@ async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: f
             summary = await asyncio.to_thread(run_sync)
             if summary:
                 log.info("Даты этапов обновлены с olimpiada.ru: %s", summary)
-        except Exception:  # noqa: BLE001 — сайт может быть недоступен, попробуем через час
+        except Exception:  # noqa: BLE001 — сайт может быть недоступен, попробуем позже
             log.exception("Не удалось обновить даты этапов с olimpiada.ru")
         await asyncio.sleep(check_every)
 

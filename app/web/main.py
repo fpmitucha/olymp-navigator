@@ -1210,7 +1210,20 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         uni_programs = {u.university: [(p, program_label(p, names)) for p in university_programs(u)]
                         for u in universities}
         start = today()
+        with db() as s:
+            all_stages = s.stages()
+            summary = s.stages_summary(today())
+            sync_state = s.get_meta("stages_sync_state") or ""
+            synced_at = s.get_meta("stages_synced_at") or ""
+            requested = bool(s.get_meta("stages_sync_request"))
+        upcoming: dict[str, list] = {}
+        for st in all_stages:
+            if st.is_upcoming(today()):
+                upcoming.setdefault(catalog.canonical_id(st.olympiad_id), []).append(st)
+        stage_info = {oid: (len(v), min((x.starts_at or x.ends_at) for x in v)) for oid, v in upcoming.items()}
         return render(request, "admin_news_generate.html", olympiads=olympiads, profiles=profiles,
+                      stage_info=stage_info, summary=summary, sync_state=sync_state, synced_at=synced_at[:16],
+                      requested=requested,
                       uni_programs=uni_programs, templates=[t for t, _ in ARTICLES], start=start,
                       end=start + timedelta(days=30), categories=news_mod.CATEGORIES, cta=news_mod.CTA,
                       level_of=lambda o: o.best_level(catalog.current_year), error=request.query_params.get("error"))
@@ -1253,8 +1266,17 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             drafts = news_mod.stage_news(catalog, benefits, stages, ids, profiles, kinds, start, end, opts,
                                          combined=form.get("combined") == "1")
         if not drafts:
-            return RedirectResponse("/admin/news/generate?error=По+этим+настройкам+нечего+писать:+нет+этапов+"
-                                    "или+льгот+в+периоде", status_code=303)
+            missing = ""
+            if mode == "stages":
+                with db() as s:
+                    have = {catalog.canonical_id(st.olympiad_id) for st in s.stages()}
+                lacking = [short(catalog.get(i)) for i in ids if i not in have]
+                if lacking:
+                    missing = " Нет ни одной даты у: " + ", ".join(lacking[:8]) + ". Добавь даты в «Даты этапов»."
+            from urllib.parse import quote
+
+            return RedirectResponse("/admin/news/generate?error=" + quote(
+                "По этим настройкам нечего писать: нет этапов в выбранном периоде." + missing), status_code=303)
         created = []
         for d in drafts:
             if d.kind == "benefits":
@@ -1273,6 +1295,68 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         if len(created) == 1:
             return RedirectResponse(f"/admin/news/{created[0]}/edit", status_code=303)
         return RedirectResponse("/admin/news?status=draft", status_code=303)
+
+    # -- даты этапов: проверка и ручное добавление ------------------------------
+
+    @app.post("/admin/stages/sync")
+    def admin_stages_sync(request: Request, csrf: str = Form(""), back: str = Form("/admin/stages")):
+        """Попросить бота обновить даты с olimpiada.ru сейчас (он проверяет просьбу раз в 5 минут)."""
+        admin_post(request, csrf)
+        with db() as s:
+            s.set_meta("stages_sync_request", today().isoformat())
+        return RedirectResponse(back if back.startswith("/admin") else "/admin/stages", status_code=303)
+
+    @app.get("/admin/stages", response_class=HTMLResponse)
+    def admin_stages(request: Request, olympiad: str = "", show: str = "upcoming"):
+        require_admin(request)
+        from app.bot.texts import sort_key
+
+        with db() as s:
+            stages = s.stages(catalog.canonical_id(olympiad)) if olympiad else s.stages()
+            summary = s.stages_summary(today())
+            sync_state = s.get_meta("stages_sync_state") or ""
+            requested = bool(s.get_meta("stages_sync_request"))
+        if show == "upcoming":
+            stages = [st for st in stages if st.is_upcoming(today()) or not (st.starts_at or st.ends_at)]
+        rows = [(st, catalog.get(st.olympiad_id)) for st in stages][:500]
+        olympiads = sorted(catalog.olympiads.values(), key=lambda o: sort_key(short(o)))
+        return render(request, "admin_stages.html", rows=rows, olympiads=olympiads, olympiad=olympiad, show=show,
+                      summary=summary, sync_state=sync_state, requested=requested,
+                      kinds={"registration": "регистрация", "qualifying": "отборочный", "final": "заключительный",
+                             "results": "результаты", "other": "другое"})
+
+    @app.post("/admin/stages/add")
+    def admin_stages_add(request: Request, csrf: str = Form(""), olympiad_id: str = Form(""), kind: str = Form(""),
+                         title: str = Form(""), starts_at: str = Form(""), ends_at: str = Form(""),
+                         profile: str = Form("")):
+        """Дата этапа вручную — когда её нет на olimpiada.ru или там ошибка (сверено с официальным сайтом)."""
+        admin_post(request, csrf)
+        from app.stages import StageRow
+
+        o = get_olympiad(catalog.canonical_id(olympiad_id))
+        if kind not in ("registration", "qualifying", "final", "results", "other"):
+            raise HTTPException(422, "Неизвестный вид этапа")
+        try:
+            start = date.fromisoformat(starts_at) if starts_at else None
+            end = date.fromisoformat(ends_at) if ends_at else None
+        except ValueError:
+            raise HTTPException(422, "Даты в формате ГГГГ-ММ-ДД") from None
+        if not (start or end):
+            raise HTTPException(422, "Нужна хотя бы одна дата")
+        names = {"registration": "Регистрация", "qualifying": "Отборочный этап", "final": "Заключительный этап",
+                 "results": "Результаты", "other": "Событие"}
+        with db() as s:
+            s.upsert_stages([StageRow(olympiad_id=o.id, kind=kind, title=" ".join(title.split())[:200] or names[kind],
+                                      starts_at=start, ends_at=end, profile=profile.strip()[:100] or None,
+                                      academic_year=catalog.current_year, source_url=None)])
+        return RedirectResponse(f"/admin/stages?olympiad={o.id}", status_code=303)
+
+    @app.post("/admin/stages/{stage_id:int}/delete")
+    def admin_stages_delete(request: Request, stage_id: int, csrf: str = Form(""), olympiad: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            s.delete_manual_stage(stage_id)
+        return RedirectResponse(f"/admin/stages?olympiad={olympiad}", status_code=303)
 
     # -- «Предложить вуз» ------------------------------------------------------
 

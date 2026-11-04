@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Даты этапов · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin/news/generate">← Генератор новостей</a>
+  <div class="adm-head">
+    <div><h1>Даты этапов</h1>
+      <p class="muted">Всего {{ summary.total }} · предстоящих {{ summary.upcoming }} · олимпиад {{ summary.olympiads }} · добавлено вручную {{ summary.manual }}{% if sync_state %}<br>Синхронизация: {{ sync_state }}{% endif %}</p></div>
+    <form method="post" action="/admin/stages/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small" type="submit" {% if requested %}disabled{% endif %}>{{ 'Обновление запрошено — бот начнёт в течение 5 минут' if requested else 'Обновить даты с olimpiada.ru сейчас' }}</button></form>
+  </div>
+
+  <form method="get" class="adm-inline">
+    <select class="field" name="olympiad" aria-label="Олимпиада" onchange="this.form.submit()"><option value="">Все олимпиады</option>
+      {% for o in olympiads %}<option value="{{ o.id }}" {% if o.id == olympiad %}selected{% endif %}>{{ short(o) }}</option>{% endfor %}</select>
+    <select class="field" name="show" onchange="this.form.submit()"><option value="upcoming" {% if show == 'upcoming' %}selected{% endif %}>Только предстоящие</option><option value="all" {% if show == 'all' %}selected{% endif %}>Все, включая прошедшие</option></select>
+  </form>
+
+  {% if olympiad %}
+  <section class="adm-card">
+    <h2>Добавить дату вручную</h2>
+    <p class="small muted">Если даты нет на olimpiada.ru или там ошибка — сверься с официальным сайтом олимпиады и добавь здесь. Ручные даты синхронизация не трогает.</p>
+    <form method="post" action="/admin/stages/add" class="adm-inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="olympiad_id" value="{{ olympiad }}">
+      <select class="field" name="kind" aria-label="Вид">{% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+      <input class="field" name="title" placeholder="Название (например, «Второй отборочный этап»)" aria-label="Название" style="min-width:280px">
+      <label class="small">С <input class="field" type="date" name="starts_at"></label>
+      <label class="small">По <input class="field" type="date" name="ends_at"></label>
+      <input class="field" name="profile" placeholder="Профиль (пусто — все)" aria-label="Профиль">
+      <button class="btn small" type="submit">Добавить</button>
+    </form>
+  </section>
+  {% else %}<p class="small muted">Выбери олимпиаду, чтобы добавить дату вручную.</p>{% endif %}
+
+  <div class="adm-table">
+    <table>
+      <thead><tr><th>Даты</th><th>Олимпиада</th><th>Этап</th><th>Профиль</th><th>Откуда</th><th></th></tr></thead>
+      <tbody>
+      {% for st, o in rows %}
+      <tr>
+        <td class="small nowrap">{% if st.starts_at %}{{ st.starts_at.strftime('%d.%m.%Y') }}{% endif %}{% if st.ends_at and st.ends_at != st.starts_at %} – {{ st.ends_at.strftime('%d.%m.%Y') }}{% endif %}</td>
+        <td><a href="/admin/stages?olympiad={{ st.olympiad_id }}">{{ short(o) if o else st.olympiad_id }}</a></td>
+        <td>{{ st.title }} <span class="muted small">· {{ kinds.get(st.kind, st.kind) }}</span></td>
+        <td class="small">{{ st.profile or 'все' }}</td>
+        <td class="small">{% if st.source_url %}<a href="{{ st.source_url }}" target="_blank" rel="noopener">olimpiada.ru</a>{% else %}вручную{% endif %}</td>
+        <td>{% if not st.source_url %}<form method="post" action="/admin/stages/{{ st.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="olympiad" value="{{ olympiad }}"><button class="linkbtn small" type="submit">Удалить</button></form>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Дат нет. Нажми «Обновить даты с olimpiada.ru сейчас» или добавь вручную.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1023,3 +1023,18 @@ class Storage:
     def query(self, sql: str, params: tuple = ()) -> list[dict]:
         """Для отчётов статистики (только SELECT из кода сайта)."""
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    # -- этапы: управление из админки ------------------------------------------
+
+    def delete_manual_stage(self, stage_id: int) -> bool:
+        """Удалить этап, добавленный вручную (загруженные с сайта обновляются синхронизацией)."""
+        cur = self.conn.execute("DELETE FROM stage WHERE id = ? AND external_id IS NULL", (stage_id,))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def stages_summary(self, today: date) -> dict:
+        row = self.conn.execute(
+            "SELECT count(*) AS total, count(DISTINCT olympiad_id) AS olympiads, "
+            "sum(coalesce(ends_at, starts_at) >= ?) AS upcoming, sum(external_id IS NULL) AS manual FROM stage",
+            (today.isoformat(),)).fetchone()
+        return {k: row[k] or 0 for k in ("total", "olympiads", "upcoming", "manual")}

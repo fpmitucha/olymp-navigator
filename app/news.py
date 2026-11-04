@@ -297,14 +297,15 @@ def stage_news(catalog: Catalog, benefits: BenefitsCatalog, stages, olympiad_ids
     chosen = set(olympiad_ids)
     by_olympiad: dict[str, list] = {}
     for st in stages:
-        if st.kind not in kinds or (chosen and st.olympiad_id not in chosen):
+        oid_canon = catalog.canonical_id(st.olympiad_id)
+        if st.kind not in kinds or (chosen and oid_canon not in chosen):
             continue
         if profiles and not any(stage_fits(st.profile, p) for p in profiles):
             continue
         first, last = st.starts_at or st.ends_at, st.ends_at or st.starts_at
         if first is None or last < start or first > end:
             continue
-        by_olympiad.setdefault(st.olympiad_id, []).append(st)
+        by_olympiad.setdefault(oid_canon, []).append(st)
     drafts = []
     blocks = []
     for oid, items in by_olympiad.items():

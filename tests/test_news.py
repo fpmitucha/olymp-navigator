@@ -248,3 +248,35 @@ class GeneratorTest(NewsWebTest):
         self.assertIn("Тестовый гайд 123", self.anon.get("/news?category=guides").text)
         self.assertNotIn("Тестовый гайд 123", self.anon.get("/news?category=stages").text)
         self.assertIn("Что такое БВИ", self.admin.get("/admin/news/new?template=0").text)
+
+
+@unittest.skipUnless(HAS_WEB, "fastapi не установлен")
+class StagesAdminTest(GeneratorTest):
+    def test_stage_news_and_benefits_news(self):
+        pass
+
+    def test_edit_sources_checked_before_publish(self):
+        pass
+
+    def test_manual_stage_and_sync_request(self):
+        from tests.helpers import sample_catalog
+
+        other = [o for o in sample_catalog().olympiads.values() if o.id != self.fiz.id][0]
+        page = self.admin.get("/admin/news/generate").text
+        self.assertIn("этапов 2", page)                 # у Физтеха есть даты
+        self.assertIn("нет дат", page)
+        r = self.post("/admin/news/generate", {"mode": "stages", "olympiads": [other.id]})
+        self.assertIn("error", r.headers["location"])
+        self.post("/admin/stages/add", {"olympiad_id": other.id, "kind": "qualifying", "title": "Отбор-тест-77",
+                                        "starts_at": "2026-12-13", "ends_at": ""})
+        self.assertIn("Отбор-тест-77", self.admin.get(f"/admin/stages?olympiad={other.id}").text)
+        ok = self.post("/admin/news/generate", {"mode": "stages", "olympiads": [other.id], "start": "2026-11-01",
+                                                "end": "2026-12-31"})
+        self.assertIn("/edit", ok.headers["location"])
+        self.assertIn("13 декабря", self.admin.get(ok.headers["location"]).text)
+        self.post("/admin/stages/sync", {})
+        with self.app.state.db() as s:
+            self.assertTrue(s.get_meta("stages_sync_request"))
+            manual = [st for st in s.stages(other.id) if st.title == "Отбор-тест-77"][0]
+        self.post(f"/admin/stages/{manual.id}/delete", {"olympiad": other.id})
+        self.assertNotIn("Отбор-тест-77", self.admin.get(f"/admin/stages?olympiad={other.id}").text)
