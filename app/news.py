@@ -94,11 +94,17 @@ def generate(catalog: Catalog, benefits: BenefitsCatalog, stages, today: date, s
     не превращаем в «новые даты» (иначе первая синхронизация завалит очередь)."""
     year = catalog.current_year
     drafts: list[Draft] = []
+    lines: dict[tuple[str, str], tuple[str, int]] = {}
     for st in stages:
+        if st.kind not in ("registration", "qualifying", "final") or not st.is_upcoming(today):
+            continue
         o = catalog.get(st.olympiad_id)
         if o is None or not benefits.for_olympiad(o.id):
             continue
-        line, count = benefits_line(benefits, o, st.profile or "", year)
+        key = (o.id, st.profile or "")
+        if key not in lines:
+            lines[key] = benefits_line(benefits, o, st.profile or "", year)
+        line, count = lines[key]
         if not count:
             continue
         profile = st.profile or ""

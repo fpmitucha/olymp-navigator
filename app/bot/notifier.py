@@ -451,6 +451,19 @@ async def post_news(storage: Storage, send: SendFn, channel: str, site_url: str 
     return posted
 
 
+def _housekeeping(db_path: str, catalog: Catalog, benefits, site_url: str, autopublish: bool) -> None:
+    storage = Storage(db_path)
+    try:
+        today = moscow_now().date()
+        crm_housekeeping(storage, catalog, today, site_url)
+        if benefits is not None:
+            news_housekeeping(storage, catalog, benefits, today, autopublish)
+    except Exception:  # noqa: BLE001
+        log.exception("Сбой напоминаний сопровождения или новостей")
+    finally:
+        storage.close()
+
+
 async def outbox_loop(db_path: str, send: SendFn, catalog: Catalog | None = None, site_url: str = "",
                       benefits=None, news_channel: str = "", news_autopublish: bool = False,
                       interval: float = 20, housekeeping_every: float = 60 * 60) -> None:
@@ -463,10 +476,9 @@ async def outbox_loop(db_path: str, send: SendFn, catalog: Catalog | None = None
         try:
             now = asyncio.get_running_loop().time()
             if catalog is not None and now - last >= housekeeping_every and not is_quiet_time(moscow_now()):
-                crm_housekeeping(storage, catalog, moscow_now().date(), site_url)
-                if benefits is not None:
-                    news_housekeeping(storage, catalog, benefits, moscow_now().date(), news_autopublish)
                 last = now
+                # тяжёлый проход (все этапы × льготы вузов) — в отдельном потоке, чтобы бот не «зависал»
+                await asyncio.to_thread(_housekeeping, db_path, catalog, benefits, site_url, news_autopublish)
             await send_outbox(storage, send)
             if not is_quiet_time(moscow_now()):
                 await post_news(storage, send, news_channel, site_url)
