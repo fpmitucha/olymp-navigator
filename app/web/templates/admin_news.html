@@ -6,12 +6,16 @@
   <a class="small muted" href="/admin">← Клиенты</a>
   <div class="adm-head">
     <div><h1>Новости</h1><p class="muted">Черновики собираются сами из этапов олимпиад (раз в час). Проверь и опубликуй — новость появится на сайте и в канале.</p></div>
-    <a class="btn" href="/admin/news/new">+ Написать статью</a>
+    <div class="adm-inline"><a class="btn" href="/admin/news/generate">Сгенерировать</a><a class="btn ghost" href="/admin/news/new">+ Написать статью</a></div>
   </div>
   <div class="adm-groups">
     <a class="chip {{ 'on' if status == 'draft' }}" href="/admin/news?status=draft">Черновики · {{ counts.draft }}</a>
     <a class="chip {{ 'on' if status == 'published' }}" href="/admin/news?status=published">Опубликовано · {{ counts.published }}</a>
     <a class="chip {{ 'on' if status == 'rejected' }}" href="/admin/news?status=rejected">Отклонено · {{ counts.rejected }}</a>
+  </div>
+  <div class="adm-groups small">
+    <a class="chip {{ 'on' if not category }}" href="/admin/news?status={{ status }}">Все разделы</a>
+    {% for key, label in categories.items() %}<a class="chip {{ 'on' if category == key }}" href="/admin/news?status={{ status }}&category={{ key }}">{{ label }}</a>{% endfor %}
   </div>
   <form method="post" action="/admin/news/bulk" id="bulk">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -30,7 +34,7 @@
       <label class="adm-news-item">
         <input type="checkbox" name="ids" value="{{ n.id }}">
         <span>
-          <span class="muted small">{{ n.created_at[:16]|replace('T', ' ') }} UTC · {{ kinds.get(n.kind, n.kind) }}{% if n.posted_at %} · в канале{% endif %}</span>
+          <span class="muted small">{{ n.created_at[:16]|replace('T', ' ') }} UTC · {{ n.category_label or kinds.get(n.kind, n.kind) }}{% if n.sources_list %} · источников {{ n.sources_list|length }}{% else %} · <span class="warn">без источника</span>{% endif %}{% if n.posted_at %} · в канале{% endif %}</span>
           <b>{{ n.title }}</b>
           <span class="small">{{ n.body[:260] }}{% if n.body|length > 260 %}…{% endif %}</span>
           <span class="small"><a href="/admin/news/{{ n.id }}/edit">Редактировать</a>{% if status == 'published' %} · <a href="/news/{{ n.id }}-{{ n.slug }}" target="_blank" rel="noopener">на сайте</a>{% endif %}</span>

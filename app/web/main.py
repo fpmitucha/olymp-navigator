@@ -17,7 +17,7 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -1037,22 +1037,46 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     from app import news as news_mod
 
     def news_view(item: dict) -> dict:
+        import json as _json
+
         o = catalog.get(item["olympiad_id"]) if item.get("olympiad_id") else None
-        return dict(item, olympiad=o, slug=news_mod.slugify(item["title"]),
-                    kind_label=news_mod.KINDS.get(item["kind"], ""), date=(item["published_at"] or item["created_at"])[:10])
+        try:
+            sources = _json.loads(item.get("sources") or "[]")
+        except ValueError:
+            sources = []
+        if not sources and item.get("source_url") and news_mod.is_official(item["source_url"]):
+            sources = [{"url": item["source_url"], "title": "Источник", "ok": True}]
+        category = item.get("category") or news_mod.KIND_CATEGORY.get(item["kind"], "")
+        return dict(item, olympiad=o, slug=news_mod.slugify(item["title"]), sources_list=sources,
+                    category=category, category_label=news_mod.CATEGORIES.get(category, ""),
+                    kind_label=news_mod.KINDS.get(item["kind"], ""),
+                    date=(item["published_at"] or item["created_at"])[:10])
+
+    def check_all(sources: list[dict]) -> list[dict]:
+        """Проверить ссылки параллельно (каждая — до 8 секунд)."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        if not sources:
+            return []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            oks = list(pool.map(news_mod.check_url, [x["url"] for x in sources]))
+        stamp = today().isoformat()
+        return [dict(x, ok=ok, checked_at=stamp) for x, ok in zip(sources, oks)]
 
     @app.get("/news", response_class=HTMLResponse)
-    def news_page(request: Request, page: int = Query(1, ge=1, le=500), mine: int = 0):
-        """Лента новостей; mine=1 — только по олимпиадам, за которыми следишь."""
+    def news_page(request: Request, page: int = Query(1, ge=1, le=500), mine: int = 0, category: str = ""):
+        """Лента новостей; mine=1 — только по олимпиадам, за которыми следишь; category — раздел."""
         user = current_user(request)
+        category = category if category in news_mod.CATEGORIES else ""
         with db() as s:
             ids = None
             if mine and user:
                 ids = list(dict.fromkeys(catalog.canonical_id(x) for x in s.subscriptions(user)))
                 ids += [r["olympiad_id"] for r in (s.crm_olympiads(user) if s.crm_client(user) else [])]
-            items = s.news_list("published", limit=21, offset=(page - 1) * 20, olympiad_ids=ids)
+            items = s.news_list("published", limit=21, offset=(page - 1) * 20, olympiad_ids=ids, category=category)
         return render(request, "news.html", items=[news_view(i) for i in items[:20]], page=page,
-                      has_next=len(items) > 20, mine=bool(mine and user))
+                      has_next=len(items) > 20, mine=bool(mine and user), category=category,
+                      categories=news_mod.CATEGORIES)
 
     @app.get("/news/rss.xml")
     def news_rss(request: Request):
@@ -1083,14 +1107,15 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         return render(request, "news_item.html", item=view)
 
     @app.get("/admin/news", response_class=HTMLResponse)
-    def admin_news(request: Request, status: str = "draft"):
+    def admin_news(request: Request, status: str = "draft", category: str = ""):
         require_admin(request)
         status = status if status in ("draft", "published", "rejected") else "draft"
+        category = category if category in news_mod.CATEGORIES else ""
         with db() as s:
-            items = s.news_list(status, limit=200)
+            items = s.news_list(status, limit=300, category=category)
             counts = {k: s.news_count(k) for k in ("draft", "published", "rejected")}
         return render(request, "admin_news.html", items=[news_view(i) for i in items], status=status, counts=counts,
-                      kinds=news_mod.KINDS)
+                      kinds=news_mod.KINDS, categories=news_mod.CATEGORIES, category=category)
 
     @app.post("/admin/news/bulk")
     async def admin_news_bulk(request: Request):
@@ -1107,32 +1132,147 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                     s.update_news(news_id, status=target)
         return RedirectResponse(f"/admin/news?status={form.get('back', 'draft')}", status_code=303)
 
+    def edit_page(request: Request, item: dict | None, *, errors: list[str] | None = None, checked: bool = False):
+        return render(request, "admin_news_edit.html", item=item, categories=news_mod.CATEGORIES,
+                      sources_text=news_mod.sources_text(item["sources_list"]) if item else "",
+                      errors=errors or [], checked=checked)
+
     @app.get("/admin/news/new", response_class=HTMLResponse)
-    @app.get("/admin/news/{news_id}/edit", response_class=HTMLResponse)
-    def admin_news_edit(request: Request, news_id: int = 0):
+    @app.get("/admin/news/{news_id:int}/edit", response_class=HTMLResponse)
+    def admin_news_edit(request: Request, news_id: int = 0, template: int = -1):
         require_admin(request)
         item = None
         if news_id:
             with db() as s:
-                item = s.news_item(news_id)
-            if item is None:
+                found = s.news_item(news_id)
+            if found is None:
                 raise HTTPException(404, "Новость не найдена")
-        return render(request, "admin_news_edit.html", item=item)
+            item = news_view(found)
+        elif template >= 0:
+            from app.news_seed import ARTICLES
 
-    @app.post("/admin/news/save")
+            if template < len(ARTICLES):
+                title, body = ARTICLES[template]
+                # вузы, упомянутые в тексте, — их документы о приёме как источники (проверятся при публикации)
+                src = [{"url": u.source_url, "title": f"{u.university}: документ о приёме {u.admission_year}"}
+                       for u in universities if u.source_url and re.search(rf"\b{re.escape(u.university)}\b", body)]
+                item = {"id": 0, "title": title, "body": body, "category": "guides", "sources_list": src,
+                        "status": "draft"}
+        return edit_page(request, item)
+
+    @app.post("/admin/news/save", response_class=HTMLResponse)
     def admin_news_save(request: Request, csrf: str = Form(""), news_id: int = Form(0), title: str = Form(""),
-                        body: str = Form(""), action: str = Form("draft")):
+                        body: str = Form(""), category: str = Form(""), sources: str = Form(""),
+                        action: str = Form("draft")):
+        """Сохранить, проверить ссылки или опубликовать. Публикация — только с рабочими ссылками."""
+        import json as _json
+
         admin_post(request, csrf)
         title, body = " ".join(title.split())[:300], body.strip().replace("\r\n", "\n")[:20000]
+        category = category if category in news_mod.CATEGORIES else "guides"
+        src = news_mod.parse_sources(sources)
+        errors = []
         if not title or not body:
-            raise HTTPException(422, "Нужны заголовок и текст")
-        status = "published" if action == "publish" else "draft"
+            errors.append("Нужны заголовок и текст.")
+        unofficial = [x["url"] for x in src if not news_mod.is_official(x["url"])]
+        if unofficial:
+            errors.append("Не официальные источники (агрегаторы и соцсети): " + ", ".join(unofficial))
+        if action in ("check", "publish", "publish_drop"):
+            src = check_all(src)
+            broken = [x for x in src if not x["ok"]]
+            if action == "publish_drop":
+                src = [x for x in src if x["ok"]]
+            elif broken and action == "publish":
+                errors.append("Не открываются: " + ", ".join(x["url"] for x in broken)
+                              + " — исправь ссылки или нажми «Убрать нерабочие и опубликовать».")
+        draft = {"id": news_id, "title": title, "body": body, "category": category, "sources_list": src,
+                 "status": "draft"}
+        if errors or action == "check":
+            return edit_page(request, draft, errors=errors, checked=action == "check" or bool(src))
+        status = "published" if action in ("publish", "publish_drop") else "draft"
+        payload = _json.dumps(src, ensure_ascii=False)
         with db() as s:
             if news_id:
-                s.update_news(news_id, title=title, body=body, status=status)
+                s.update_news(news_id, title=title, body=body, status=status, category=category, sources=payload)
             else:
-                news_id = s.add_news(kind="article", title=title, body=body, status=status)
+                news_id = s.add_news(kind="article", title=title, body=body, status=status, category=category,
+                                     sources=payload, source_url=src[0]["url"] if src else None)
         return RedirectResponse(f"/admin/news?status={status}", status_code=303)
+
+    @app.get("/admin/news/generate", response_class=HTMLResponse)
+    def admin_news_generate_form(request: Request):
+        require_admin(request)
+        from app.bot.texts import sort_key
+        from app.news_seed import ARTICLES
+
+        olympiads = sorted(catalog.olympiads.values(), key=lambda o: sort_key(short(o)))
+        profiles = sorted({p for o in olympiads for p in o.profiles_in(catalog.current_year)})
+        uni_programs = {u.university: [(p, program_label(p, names)) for p in university_programs(u)]
+                        for u in universities}
+        start = today()
+        return render(request, "admin_news_generate.html", olympiads=olympiads, profiles=profiles,
+                      uni_programs=uni_programs, templates=[t for t, _ in ARTICLES], start=start,
+                      end=start + timedelta(days=30), categories=news_mod.CATEGORIES, cta=news_mod.CTA,
+                      level_of=lambda o: o.best_level(catalog.current_year), error=request.query_params.get("error"))
+
+    @app.post("/admin/news/generate")
+    async def admin_news_generate(request: Request):
+        """Собрать черновики по настройкам из формы: этапы, льготы вуза, подборка."""
+        import json as _json
+
+        from starlette.concurrency import run_in_threadpool
+
+        form = await request.form()
+        admin_post(request, str(form.get("csrf", "")))
+        mode = str(form.get("mode", "stages"))
+        ids = [catalog.canonical_id(str(v)) for v in form.getlist("olympiads") if catalog.get(str(v))]
+        profiles = [str(v) for v in form.getlist("profiles") if str(v).strip()]
+        unis = {str(v) for v in form.getlist("universities") if benefits.get(str(v))}
+        diploma = "winner" if form.get("diploma") == "winner" else "prize"
+        try:
+            grade = min(11, max(9, int(str(form.get("grade", "11")))))
+            start = date.fromisoformat(str(form.get("start") or today().isoformat()))
+            end = date.fromisoformat(str(form.get("end") or (today() + timedelta(days=30)).isoformat()))
+            level = int(str(form.get("level") or 0))
+        except ValueError:
+            return RedirectResponse("/admin/news/generate?error=Проверь+даты+и+класс", status_code=303)
+        opts = news_mod.GenOptions(benefits=bool(form.get("with_benefits")), diploma=diploma, grade=grade,
+                                   universities=unis or None, cta=tuple(str(v) for v in form.getlist("cta")))
+        kinds = {str(v) for v in form.getlist("kinds")} or {"registration", "qualifying", "final"}
+        with db() as s:
+            stages = s.stages()
+        if mode == "benefits":
+            d = news_mod.benefits_news(catalog, benefits, str(form.get("university", "")),
+                                       str(form.get("program", "")), diploma, ids, opts)
+            drafts = [d] if d else []
+        elif mode == "digest":
+            drafts = news_mod.digest_news(catalog, benefits, stages, start, end, level, profiles, opts)
+        else:
+            if not ids:
+                return RedirectResponse("/admin/news/generate?error=Выбери+олимпиады", status_code=303)
+            drafts = news_mod.stage_news(catalog, benefits, stages, ids, profiles, kinds, start, end, opts,
+                                         combined=form.get("combined") == "1")
+        if not drafts:
+            return RedirectResponse("/admin/news/generate?error=По+этим+настройкам+нечего+писать:+нет+этапов+"
+                                    "или+льгот+в+периоде", status_code=303)
+        created = []
+        for d in drafts:
+            if d.kind == "benefits":
+                src = [{"url": d.source_url, "title": "Документ вуза об особых правах"}] if d.source_url else []
+            else:
+                o = catalog.get(d.olympiad_id) if d.olympiad_id else None
+                src = news_mod.official_sources(o)
+            src = await run_in_threadpool(check_all, src)
+            src = [x for x in src if x["ok"]]
+            category = {"benefits": "benefits", "digest": "digest"}.get(d.kind, "stages")
+            with db() as s:
+                created.append(s.add_news(kind=d.kind, title=d.title, body=d.body, olympiad_id=d.olympiad_id,
+                                          profile=d.profile, event_date=d.event_date, category=category,
+                                          sources=_json.dumps(src, ensure_ascii=False),
+                                          source_url=src[0]["url"] if src else None))
+        if len(created) == 1:
+            return RedirectResponse(f"/admin/news/{created[0]}/edit", status_code=303)
+        return RedirectResponse("/admin/news?status=draft", status_code=303)
 
     # -- «Предложить вуз» ------------------------------------------------------
 

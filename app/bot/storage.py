@@ -282,6 +282,8 @@ class Storage:
         for column in ("username", "first_name", "last_name", "phone", "phone_at", "last_seen"):
             self._add_column("bot_user", column, "TEXT")
         self._add_column("web_session", "last_seen", "TEXT")
+        self._add_column("news", "category", "TEXT NOT NULL DEFAULT ''")
+        self._add_column("news", "sources", "TEXT NOT NULL DEFAULT '[]'")
         self.conn.commit()
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
@@ -877,13 +879,15 @@ class Storage:
 
     def add_news(self, *, kind: str, title: str, body: str, dedupe_key: str | None = None,
                  olympiad_id: str | None = None, profile: str = "", source_url: str | None = None,
-                 event_date: date | None = None, status: str = "draft") -> int | None:
+                 event_date: date | None = None, status: str = "draft", category: str = "",
+                 sources: str = "[]") -> int | None:
         """Новая новость; None — такая (по dedupe_key) уже была."""
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO news (kind, dedupe_key, title, body, olympiad_id, profile, source_url, event_date, "
-            "status, created_at, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "status, created_at, published_at, category, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (kind, dedupe_key, title[:300], body[:20000], olympiad_id, profile, source_url,
-             event_date.isoformat() if event_date else None, status, _now(), _now() if status == "published" else None))
+             event_date.isoformat() if event_date else None, status, _now(), _now() if status == "published" else None,
+             category, sources))
         self.conn.commit()
         return cur.lastrowid if cur.rowcount == 1 else None
 
@@ -892,9 +896,12 @@ class Storage:
         return dict(row) if row else None
 
     def news_list(self, status: str = "published", limit: int = 30, offset: int = 0,
-                  olympiad_ids: list[str] | None = None) -> list[dict]:
+                  olympiad_ids: list[str] | None = None, category: str = "") -> list[dict]:
         sql = "SELECT * FROM news WHERE status = ?"
         params: list = [status]
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
         if olympiad_ids is not None:
             if not olympiad_ids:
                 return []
@@ -908,16 +915,18 @@ class Storage:
         return self.conn.execute("SELECT count(*) FROM news WHERE status = ?", (status,)).fetchone()[0]
 
     def update_news(self, news_id: int, *, title: str | None = None, body: str | None = None,
-                    status: str | None = None) -> None:
+                    status: str | None = None, category: str | None = None, sources: str | None = None) -> None:
         item = self.news_item(news_id)
         if item is None:
             return
         published_at = item["published_at"]
         if status == "published" and not published_at:
             published_at = _now()
-        self.conn.execute("UPDATE news SET title = ?, body = ?, status = ?, published_at = ? WHERE id = ?",
-                          (title if title is not None else item["title"], body if body is not None else item["body"],
-                           status or item["status"], published_at, news_id))
+        self.conn.execute(
+            "UPDATE news SET title = ?, body = ?, status = ?, published_at = ?, category = ?, sources = ? WHERE id = ?",
+            (title if title is not None else item["title"], body if body is not None else item["body"],
+             status or item["status"], published_at, category if category is not None else item["category"],
+             sources if sources is not None else item["sources"], news_id))
         self.conn.commit()
 
     def delete_news(self, news_id: int) -> None:

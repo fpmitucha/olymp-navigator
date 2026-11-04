@@ -405,7 +405,8 @@ def crm_housekeeping(storage: Storage, catalog: Catalog, today: date, site_url: 
 AUTO_NEWS = ("registration_open", "registration_closing", "stage_dates")
 
 
-def news_housekeeping(storage: Storage, catalog: Catalog, benefits, today: date, autopublish: bool = False) -> int:
+def news_housekeeping(storage: Storage, catalog: Catalog, benefits, today: date, autopublish: bool = False,
+                      check_links: bool = True) -> int:
     """Черновики новостей из этапов олимпиад (и подборка по понедельникам). Возвращает число новых."""
     from app import news
 
@@ -419,10 +420,20 @@ def news_housekeeping(storage: Storage, catalog: Catalog, benefits, today: date,
     if digest:
         drafts.append(digest)
     added = 0
+    checked: dict[str, bool] = {}
     for d in drafts:
         status = "published" if autopublish and d.kind in AUTO_NEWS else "draft"
+        sources = []
+        if d.source_url and check_links:
+            if d.source_url not in checked:
+                checked[d.source_url] = news.check_url(d.source_url)
+            if checked[d.source_url]:
+                sources = [{"url": d.source_url, "title": "Официальный сайт олимпиады", "ok": True}]
         if storage.add_news(kind=d.kind, title=d.title, body=d.body, dedupe_key=d.key, olympiad_id=d.olympiad_id,
-                            profile=d.profile, source_url=d.source_url, event_date=d.event_date, status=status):
+                            profile=d.profile, source_url=sources[0]["url"] if sources else None,
+                            event_date=d.event_date, status=status,
+                            category=news.KIND_CATEGORY.get(d.kind, "stages"),
+                            sources=json.dumps(sources, ensure_ascii=False)):
             added += 1
     return added
 
