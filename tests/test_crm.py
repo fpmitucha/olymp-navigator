@@ -274,3 +274,18 @@ class GoalsFromListTest(CrmWebTest):
         with self.app.state.db() as s:
             self.assertEqual(s.university_subscriptions(self.CLIENT), ["Тестовый вуз"])
         self.assertIn("В целях", client.get("/universities").text)
+
+
+class SessionTest(unittest.TestCase):
+    def test_sliding_30_days(self):
+        s = Storage(":memory:")
+        s.touch_user(1)
+        s.create_session("sid", 1)
+        self.assertEqual(s.session_user("sid"), 1)
+        old = "2000-01-01T00:00:00+00:00"
+        s.conn.execute("UPDATE web_session SET created_at = ?, last_seen = ?", (old, old))
+        self.assertIsNone(s.session_user("sid"))                      # 30 дней без заходов — выход
+        recent = __import__("app.bot.storage", fromlist=["_ago"])._ago(days=29)
+        s.conn.execute("UPDATE web_session SET last_seen = ?", (recent,))
+        self.assertEqual(s.session_user("sid"), 1)                     # заходил недавно — сессия жива
+        self.assertGreater(s.conn.execute("SELECT last_seen FROM web_session").fetchone()[0], recent)  # продлилась

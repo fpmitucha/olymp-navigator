@@ -281,6 +281,7 @@ class Storage:
         self._add_column("crm_olympiad", "plan", "TEXT NOT NULL DEFAULT '[]'")
         for column in ("username", "first_name", "last_name", "phone", "phone_at", "last_seen"):
             self._add_column("bot_user", column, "TEXT")
+        self._add_column("web_session", "last_seen", "TEXT")
         self.conn.commit()
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
@@ -477,10 +478,17 @@ class Storage:
                           (sid, telegram_id, _now()))
         self.conn.commit()
 
-    def session_user(self, sid: str, max_age_days: int = 60) -> int | None:
-        row = self.conn.execute("SELECT telegram_id FROM web_session WHERE sid = ? AND created_at >= ?",
-                                (sid, _ago(days=max_age_days))).fetchone()
-        return row[0] if row else None
+    def session_user(self, sid: str, max_age_days: int = 30) -> int | None:
+        """Сессия живёт max_age_days с последнего захода (скользящий срок): заходишь — продлевается."""
+        row = self.conn.execute(
+            "SELECT telegram_id, coalesce(last_seen, created_at) AS seen FROM web_session WHERE sid = ? "
+            "AND coalesce(last_seen, created_at) >= ?", (sid, _ago(days=max_age_days))).fetchone()
+        if row is None:
+            return None
+        if row["seen"] < _ago(minutes=60):          # продлеваем не чаще раза в час — меньше записей в базу
+            self.conn.execute("UPDATE web_session SET last_seen = ? WHERE sid = ?", (_now(), sid))
+            self.conn.commit()
+        return row["telegram_id"]
 
     def delete_session(self, sid: str) -> None:
         self.conn.execute("DELETE FROM web_session WHERE sid = ?", (sid,))

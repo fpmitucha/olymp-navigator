@@ -37,6 +37,7 @@ HERE = Path(__file__).parent
 BOT_USERNAME = "bvishechka_bot"
 BOT_URL = f"https://t.me/{BOT_USERNAME}"
 SESSION_COOKIE = "bv_sid"
+SESSION_DAYS = 30   # вход живёт 30 дней с последнего захода
 ROMAN = {1: "I", 2: "II", 3: "III"}
 _EMOJI = re.compile(r"<[^>]+>|[\U0001F000-\U0001FFFF☀-➿️]")
 
@@ -158,9 +159,15 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
 
     @app.middleware("http")
     async def track_pageviews(request: Request, call_next):
-        """Просмотры страниц для статистики: обезличенный id браузера, источник (utm, реферер), устройство."""
+        """Просмотры страниц для статистики: обезличенный id браузера, источник (utm, реферер), устройство.
+        Заодно продлевает cookie входа: 30 дней считаются с последнего захода, а не со входа."""
         response = await call_next(request)
         path = request.url.path
+        sid = request.cookies.get(SESSION_COOKIE)
+        if sid and "set-cookie" not in response.headers and response.status_code < 400 \
+                and not path.startswith(("/static", "/assets")):
+            response.set_cookie(SESSION_COOKIE, sid, max_age=60 * 60 * 24 * SESSION_DAYS, httponly=True,
+                                samesite="lax", secure=request.url.scheme == "https")
         ua = request.headers.get("user-agent", "")
         if (request.method != "GET" or response.status_code != 200 or path.startswith(SKIP_PREFIXES)
                 or not response.headers.get("content-type", "").startswith("text/html") or stats_mod.is_bot(ua)):
@@ -501,7 +508,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             s.create_session(sid, telegram_id)
             s.log_auth(telegram_id, request.cookies.get("bv_vid", ""))
         response = RedirectResponse("/me", status_code=303)
-        response.set_cookie(SESSION_COOKIE, sid, max_age=60 * 60 * 24 * 60, httponly=True, samesite="lax",
+        response.set_cookie(SESSION_COOKIE, sid, max_age=60 * 60 * 24 * SESSION_DAYS, httponly=True, samesite="lax",
                             secure=request.url.scheme == "https")
         return response
 
