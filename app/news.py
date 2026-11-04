@@ -278,6 +278,25 @@ class GenOptions:
     grade: int = 11
     universities: set[str] | None = None
     cta: tuple[str, ...] = ("bot",)
+    style: str = "calm"          # calm — спокойно; hook — цепляющий заголовок и вступление (только на реальных фактах)
+    today: date | None = None
+
+
+def _hook_stage(name: str, items, opts: GenOptions, bvi_count: int) -> tuple[str | None, str]:
+    """Цепляющий заголовок и вступление для новости об этапах — из настоящих дат и льгот, без выдумок."""
+    today = opts.today or date.today()
+    regs = sorted(st.ends_at for st in items if st.kind == "registration" and st.ends_at and st.ends_at >= today)
+    if regs:
+        left = (regs[0] - today).days
+        when = "сегодня" if left == 0 else "завтра" if left == 1 else f"через {left} дн."
+        title = f"Регистрация на {name} закрывается {when}"
+        lead = (f"Последний день — {day(regs[0])}. Без регистрации к отборочному этапу не допустят, "
+                "а значит, диплома этого сезона уже не будет.")
+        return title, lead
+    if bvi_count:
+        return (f"{name}: диплом даёт БВИ в {bvi_count} вуз{'е' if bvi_count == 1 else 'ах'} — даты этапов",
+                "Один диплом может заменить вступительные экзамены. Главное — не пропустить этапы.")
+    return None, ""
 
 
 def _cta(opts: GenOptions) -> str:
@@ -323,20 +342,30 @@ def stage_news(catalog: Catalog, benefits: BenefitsCatalog, stages, olympiad_ids
             when = f"до {day(st.ends_at)}" if st.kind == "registration" and st.ends_at else span(st.starts_at, st.ends_at)
             lines.append(f"• {st.title}{prof}: {when}")
         label = ", ".join(profiles) if profiles else ""
-        line = benefits_line(benefits, o, label, year, opts.diploma, opts.grade, opts.universities)[0] \
-            if opts.benefits else ""
+        line, uni_count = benefits_line(benefits, o, label, year, opts.diploma, opts.grade, opts.universities) \
+            if opts.benefits or opts.style == "hook" else ("", 0)
+        bvi_count = line.split(";")[0].count(",") + 1 if line and "БВИ —" in line else 0
+        if not opts.benefits:
+            line = ""
         name = _name(o) + (f" ({label})" if label else "")
+        hook_title, hook_lead = _hook_stage(_name(o), items, opts, bvi_count) if opts.style == "hook" else (None, "")
         if combined:
             blocks.append((min(x.starts_at or x.ends_at for x in items), f"{name}\n" + "\n".join(lines)
                            + (f"\n{line}" if line else ""), o))
         else:
             what = "регистрация и этапы" if "registration" in {x.kind for x in items} else "даты этапов"
-            drafts.append(Draft("stage_dates", "", f"{name}: {what}", _join("\n".join(lines), line, _cta(opts)),
+            drafts.append(Draft("stage_dates", "", hook_title or f"{name}: {what}",
+                                _join(hook_lead, "\n".join(lines), line, _cta(opts)),
                                 o.id, label, None, min(x.starts_at or x.ends_at for x in items)))
     if combined and blocks:
         blocks.sort(key=lambda b: b[0])
         title = f"Олимпиады: даты с {day(start)} по {day(end)}"
-        body = _join(*(b[1] for b in blocks), _cta(opts))
+        lead = ""
+        if opts.style == "hook":
+            title = f"{len(blocks)} олимпиад{'а' if len(blocks) % 10 == 1 and len(blocks) % 100 != 11 else ''} со льготами: " \
+                    f"важные даты до {day(end)}"
+            lead = "Сохрани, чтобы не пропустить: регистрации закрываются раньше, чем кажется."
+        body = _join(lead, *(b[1] for b in blocks), _cta(opts))
         d = Draft("digest", "", title, body, event_date=start)
         d.olympiad_id = blocks[0][2].id if len(blocks) == 1 else None
         drafts.append(d)
@@ -374,6 +403,12 @@ def benefits_news(catalog: Catalog, benefits: BenefitsCatalog, university: str, 
     if len(items) > limit:
         parts.append(f"И ещё {len(items) - limit} олимпиад — полный список на странице вуза.")
     title = f"{u.university}: какие олимпиады дают льготы" + (f" на «{program}»" if program else "")
+    if opts.style == "hook":
+        bvi = len(groups.get("bvi", []))
+        if bvi:
+            title = f"В {u.university} без экзаменов: {bvi} олимпиад дают БВИ" + (f" на «{program}»" if program else "")
+            parts.insert(0, "Поступить на бюджет можно без вступительных испытаний — если есть нужный диплом "
+                            "и ЕГЭ по профильному предмету не ниже порога.")
     d = Draft("benefits", "", title, _join(*parts, _cta(opts)), event_date=None)
     d.source_url = u.source_url
     return d

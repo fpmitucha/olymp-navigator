@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% from "_macros.html" import closing, plural with context %}
+{% block head %}
+<script type="application/ld+json">{{ [{"@context": "https://schema.org", "@type": "WebSite", "name": "Бвишечка", "url": base_url,
+  "potentialAction": {"@type": "SearchAction", "target": base_url ~ "/olympiads?q={search_term_string}", "query-input": "required name=search_term_string"}},
+  {"@context": "https://schema.org", "@type": "Organization", "name": "Бвишечка", "url": base_url, "logo": base_url ~ "/assets/icon-512.png",
+   "sameAs": [bot_url]}]|tojson }}</script>
+{% endblock %}
 {% block main %}
 <section class="hero">
   <svg class="hero-road" viewBox="0 0 1200 640" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">

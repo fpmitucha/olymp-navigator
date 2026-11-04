@@ -1,10 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ item.title }} · Бвишечка{% endblock %}
 {% block description %}{{ item.body[:160] }}{% endblock %}
-{% block head %}
+{% block og %}
+<meta property="og:type" content="article">
 <meta property="og:title" content="{{ item.title }}">
 <meta property="og:description" content="{{ item.body[:200] }}">
-<meta property="og:type" content="article">
+{% endblock %}
+{% block head %}
+<script type="application/ld+json">{{ {"@context": "https://schema.org", "@type": "NewsArticle", "headline": item.title[:110],
+  "datePublished": item.published_at or item.created_at, "dateModified": item.published_at or item.created_at,
+  "description": item.body[:200], "image": [base_url ~ "/assets/og.png"], "mainEntityOfPage": base_url ~ request.url.path,
+  "author": {"@type": "Organization", "name": "Бвишечка", "url": base_url},
+  "publisher": {"@type": "Organization", "name": "Бвишечка", "logo": {"@type": "ImageObject", "url": base_url ~ "/assets/icon-512.png"}}}|tojson }}</script>
 {% endblock %}
 {% block main %}
 <div class="wrap news-page">

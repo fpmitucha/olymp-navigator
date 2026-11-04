@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import plural %}
 {% block title %}{% if q %}«{{ q }}» — поиск олимпиад{% else %}Олимпиады перечня {{ current_year }}{% endif %} · Бвишечка{% endblock %}
+{% block description %}Все олимпиады перечня {{ current_year }} с уровнями и льготами в вузах: где диплом даёт БВИ или 100 баллов.{% endblock %}
 {% block main %}
 <div class="wrap">
   <div class="page-head">

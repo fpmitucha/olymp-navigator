@@ -119,7 +119,8 @@ def strongest_routes(benefits: BenefitsCatalog, catalog: Catalog, limit: int = 6
 
 def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Path | str | None = None,
                today: Callable[[], date] = date.today, secret: str = "", admin_id: int = 0,
-               site_url: str = "", crm_key: str = "") -> FastAPI:
+               site_url: str = "", crm_key: str = "", yandex_verification: str = "",
+               google_verification: str = "") -> FastAPI:
     app = FastAPI(title="Бвишечка", docs_url="/api/docs", redoc_url=None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     app.mount("/assets", StaticFiles(directory=HERE.parent / "assets"), name="assets")
@@ -155,7 +156,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     from app import stats as stats_mod
 
     VISITOR_COOKIE = "bv_vid"
-    SKIP_PREFIXES = ("/static", "/assets", "/api", "/admin", "/login/check", "/news/rss.xml", "/favicon")
+    SKIP_PREFIXES = ("/static", "/assets", "/api", "/admin", "/login/check", "/news/rss.xml", "/favicon", "/offline")
 
     @app.middleware("http")
     async def track_pageviews(request: Request, call_next):
@@ -237,6 +238,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             benefit_types=BENEFIT_TYPES, diplomas=DIPLOMAS, uni_slug=uni_slug, levels_label=levels_label,
             olympiad_count=olympiad_count, university_count=len(universities), user=user, user_name=name,
             csrf=csrf_token(request) if user else "", short=short, diploma_years=diploma_years,
+            base_url=site_url or str(request.base_url).rstrip("/"), yandex_verification=yandex_verification,
+            google_verification=google_verification,
             is_admin=bool(admin_id) and user == admin_id, pending_access=pending_access,
             pending_news=pending_news, pending_unis=pending_unis,
         )
@@ -1250,7 +1253,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         except ValueError:
             return RedirectResponse("/admin/news/generate?error=Проверь+даты+и+класс", status_code=303)
         opts = news_mod.GenOptions(benefits=bool(form.get("with_benefits")), diploma=diploma, grade=grade,
-                                   universities=unis or None, cta=tuple(str(v) for v in form.getlist("cta")))
+                                   universities=unis or None, cta=tuple(str(v) for v in form.getlist("cta")),
+                                   style="hook" if form.get("style") == "hook" else "calm", today=today())
         kinds = {str(v) for v in form.getlist("kinds")} or {"registration", "qualifying", "final"}
         with db() as s:
             stages = s.stages()
@@ -1420,6 +1424,83 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             rows = stats_mod.users(s, q, only)
         return Response(stats_mod.users_csv(rows), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": 'attachment; filename="users.csv"'})
+
+    # -- веб-приложение и SEO -------------------------------------------------
+
+    @app.get("/manifest.webmanifest")
+    def manifest():
+        import json as _json
+
+        data = {
+            "name": "Бвишечка — олимпиады и льготы при поступлении", "short_name": "Бвишечка",
+            "description": "Какая олимпиада даёт БВИ или 100 баллов в твой вуз",
+            "start_url": "/?utm_source=pwa", "scope": "/", "display": "standalone", "orientation": "portrait",
+            "background_color": "#ffffff", "theme_color": "#ffffff", "lang": "ru",
+            "icons": [{"src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                      {"src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                      {"src": "/assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
+                       "purpose": "maskable"}],
+            "shortcuts": [{"name": "Подбор от вуза", "url": "/route"}, {"name": "Мой путь", "url": "/me"},
+                          {"name": "Новости", "url": "/news"}],
+        }
+        return Response(_json.dumps(data, ensure_ascii=False), media_type="application/manifest+json")
+
+    @app.get("/sw.js")
+    def service_worker():
+        """Сервис-воркер: кэширует стили и иконки, без сети показывает страницу «нет связи»."""
+        js = """
+const CACHE = 'bv-v1';
+const SHELL = ['/static/style.css', '/assets/logo-mark.png', '/assets/icon-192.png', '/offline'];
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
+self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys =>
+  Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/static/') || url.pathname.startsWith('/assets/')) {
+    e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
+      const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return res; })));
+  } else if (req.mode === 'navigate') {
+    e.respondWith(fetch(req).catch(() => caches.match('/offline')));
+  }
+});
+"""
+        return Response(js, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/offline", response_class=HTMLResponse)
+    def offline(request: Request):
+        return render(request, "404.html", detail="Нет связи с интернетом — проверь подключение и обнови страницу.")
+
+    @app.get("/robots.txt")
+    def robots(request: Request):
+        base = site_url or str(request.base_url).rstrip("/")
+        text = ("User-agent: *\nDisallow: /admin\nDisallow: /me\nDisallow: /login\nDisallow: /r/\n"
+                "Disallow: /api/\nDisallow: /help?sent\nDisallow: /*?utm_\nAllow: /\n\n"
+                f"Sitemap: {base}/sitemap.xml\n")
+        return Response(text, media_type="text/plain")
+
+    @app.get("/sitemap.xml")
+    def sitemap(request: Request):
+        """Карта сайта для Яндекса и Google: разделы, олимпиады, вузы, подбор, новости."""
+        from xml.sax.saxutils import escape as x
+
+        base = site_url or str(request.base_url).rstrip("/")
+        urls = [("/", "daily", "1.0"), ("/olympiads", "weekly", "0.9"), ("/universities", "weekly", "0.9"),
+                ("/route", "weekly", "0.8"), ("/news", "daily", "0.8"), ("/help", "monthly", "0.5")]
+        year = catalog.current_year
+        urls += [(f"/olympiad/{o.id}", "weekly", "0.7") for o in catalog.olympiads.values()
+                 if o.profiles_in(year) or o.is_vsosh]
+        urls += [(f"/university/{slug_}", "weekly", "0.8") for slug_ in by_slug]
+        urls += [(f"/route/{slug_}", "weekly", "0.6") for slug_ in by_slug]
+        with db() as s:
+            news_items = s.news_list("published", limit=1000)
+        urls += [(f"/news/{n['id']}-{news_mod.slugify(n['title'])}", "monthly", "0.6") for n in news_items]
+        body = "".join(f"<url><loc>{x(base + u)}</loc><changefreq>{f}</changefreq><priority>{p}</priority></url>"
+                       for u, f, p in urls)
+        xml = f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{body}</urlset>'
+        return Response(xml, media_type="application/xml")
 
     # -- JSON ------------------------------------------------------------------
 

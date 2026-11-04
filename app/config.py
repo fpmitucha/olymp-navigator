@@ -47,6 +47,9 @@ class Settings:
     crm_key: str = os.environ.get("CRM_KEY", "")
     # Telegram-канал для новостей (@bvishechka_news или -100…); бот должен быть админом канала. Пусто — без канала
     news_channel: str = os.environ.get("NEWS_CHANNEL", "")
+    # Подтверждение сайта в Яндекс.Вебмастере и Google Search Console (код из meta-тега)
+    yandex_verification: str = os.environ.get("YANDEX_VERIFICATION", "")
+    google_verification: str = os.environ.get("GOOGLE_VERIFICATION", "")
     # Публиковать автоматические новости (регистрация, даты) без проверки куратором
     news_autopublish: bool = os.environ.get("NEWS_AUTOPUBLISH", "0").strip().lower() in ("1", "true", "yes")
     telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")

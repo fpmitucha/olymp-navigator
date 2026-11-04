@@ -280,3 +280,23 @@ class StagesAdminTest(GeneratorTest):
             manual = [st for st in s.stages(other.id) if st.title == "Отбор-тест-77"][0]
         self.post(f"/admin/stages/{manual.id}/delete", {"olympiad": other.id})
         self.assertNotIn("Отбор-тест-77", self.admin.get(f"/admin/stages?olympiad={other.id}").text)
+
+
+class HookStyleTest(unittest.TestCase):
+    def test_hook_uses_real_deadline(self):
+        from app.benefits import BenefitsCatalog, parse_file
+        from app.news import GenOptions, stage_news
+        from tests.helpers import sample_catalog
+        from tests.test_benefits import university
+
+        cat = sample_catalog()
+        b = BenefitsCatalog([parse_file(university(), cat, "t.json")])
+        o = cat.search("Физтех")[0].olympiad
+        st = StageRow(olympiad_id=o.id, kind="registration", title="Регистрация", starts_at=date(2026, 11, 1),
+                      ends_at=date(2026, 11, 6), profile=None, academic_year=cat.current_year, source_url=None)
+        s = Storage(":memory:")
+        s.upsert_stages([st])
+        d = stage_news(cat, b, s.stages(), [o.id], [], {"registration"}, date(2026, 11, 1), date(2026, 11, 30),
+                       GenOptions(style="hook", today=date(2026, 11, 4)), combined=False)[0]
+        self.assertIn("закрывается через 2 дн.", d.title)
+        self.assertIn("6 ноября", d.body)

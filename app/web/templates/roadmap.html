@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import plural, days_left %}
 {% block title %}Роадмап · Бвишечка{% endblock %}
-{% block head %}{% if shared %}<meta name="robots" content="noindex">{% endif %}{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
 {% macro access_form(it) %}
 <form class="rm-access-form" method="post" action="/me/roadmap/{{ it.row_id }}/access">
   <input type="hidden" name="csrf" value="{{ csrf }}">
