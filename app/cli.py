@@ -730,6 +730,33 @@ def cmd_stages_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_news_generate(args: argparse.Namespace) -> int:
+    """Собрать черновики новостей сейчас (бот делает это сам раз в час, кроме ночи)."""
+    from datetime import date
+
+    from app.bot.notifier import news_housekeeping
+    from app.bot.storage import Storage
+
+    catalog = _catalog()
+    storage = Storage(settings.bot_db_path)
+    added = news_housekeeping(storage, catalog, _benefits(catalog, strict=False), date.today(),
+                              settings.news_autopublish)
+    print(f"Новых черновиков: {added}. Проверить и опубликовать: /admin/news")
+    return 0
+
+
+def cmd_news_seed(args: argparse.Namespace) -> int:
+    """Стартовые статьи — черновиками (повторный запуск не дублирует)."""
+    from app.bot.storage import Storage
+    from app.news_seed import ARTICLES
+
+    storage = Storage(settings.bot_db_path)
+    added = sum(1 for title, body in ARTICLES
+                if storage.add_news(kind="article", title=title, body=body, dedupe_key=f"seed:{title}"))
+    print(f"Добавлено статей: {added}. Проверить и опубликовать: /admin/news")
+    return 0
+
+
 def cmd_db_migrate(args: argparse.Namespace) -> int:
     from app.db.psql import migrate
 
@@ -873,6 +900,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--trusted-proxies", default="127.0.0.1",
                    help="откуда принимать X-Forwarded-*: адрес прокси или * (в Docker за Caddy)")
     p.set_defaults(func=cmd_web_run)
+
+    news = groups.add_parser("news", help="новости").add_subparsers(dest="command", required=True)
+    p = news.add_parser("generate", help="собрать черновики новостей из этапов сейчас")
+    p.set_defaults(func=cmd_news_generate)
+    p = news.add_parser("seed", help="добавить стартовые статьи черновиками")
+    p.set_defaults(func=cmd_news_seed)
 
     stages = groups.add_parser("stages", help="этапы олимпиад").add_subparsers(dest="command", required=True)
     p = stages.add_parser("import", help="загрузить этапы из CSV")
