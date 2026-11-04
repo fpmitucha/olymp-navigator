@@ -300,3 +300,19 @@ class HookStyleTest(unittest.TestCase):
                        GenOptions(style="hook", today=date(2026, 11, 4)), combined=False)[0]
         self.assertIn("закрывается через 2 дн.", d.title)
         self.assertIn("6 ноября", d.body)
+
+
+class CategoryMigrationTest(unittest.TestCase):
+    def test_old_news_get_category(self):
+        import os
+        import tempfile
+
+        path = os.path.join(tempfile.mkdtemp(), "bot.sqlite3")
+        s = Storage(path)
+        s.add_news(kind="article", title="Старая статья", body="x", status="published")
+        s.conn.execute("UPDATE news SET category = ''")          # как в базе до появления разделов
+        s.conn.commit()
+        s.close()
+        s = Storage(path)                                          # при запуске раздел проставится сам
+        self.assertEqual(s.news_list("published", category="guides")[0]["title"], "Старая статья")
+        s.close()

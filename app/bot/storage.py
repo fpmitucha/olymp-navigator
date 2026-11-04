@@ -284,6 +284,10 @@ class Storage:
         self._add_column("web_session", "last_seen", "TEXT")
         self._add_column("news", "category", "TEXT NOT NULL DEFAULT ''")
         self._add_column("news", "sources", "TEXT NOT NULL DEFAULT '[]'")
+        # новости, созданные до появления разделов, — раздел по виду новости
+        self.conn.execute(
+            "UPDATE news SET category = CASE kind WHEN 'article' THEN 'guides' WHEN 'digest' THEN 'digest' "
+            "WHEN 'benefits' THEN 'benefits' ELSE 'stages' END WHERE category = ''")
         self.conn.commit()
 
     def _add_column(self, table: str, column: str, decl: str) -> None:
@@ -882,6 +886,8 @@ class Storage:
                  event_date: date | None = None, status: str = "draft", category: str = "",
                  sources: str = "[]") -> int | None:
         """Новая новость; None — такая (по dedupe_key) уже была."""
+        if not category:
+            category = {"article": "guides", "digest": "digest", "benefits": "benefits"}.get(kind, "stages")
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO news (kind, dedupe_key, title, body, olympiad_id, profile, source_url, event_date, "
             "status, created_at, published_at, category, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
