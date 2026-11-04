@@ -6,6 +6,11 @@
   <section class="me-hero">
     <h1>{% if profile.name %}{{ profile.name }}, твой путь{% else %}Мой путь{% endif %}</h1>
     <p class="muted">{% if profile.grade %}{{ profile.grade }} класс · {% endif %}данные приёма {{ admission_year - 1 }}, пока вузы не выложили {{ admission_year }}</p>
+    <div class="me-id">
+      <span class="id-chip"><span class="muted">Твой ID</span> {{ code[:3] }} {{ code[3:] }}</span>
+      {% if has_roadmap %}<a class="btn gold" href="/me/roadmap">Моё сопровождение — роадмап</a>
+      {% else %}<span class="muted small">Назови этот ID куратору, чтобы он открыл тебе сопровождение и роадмап.</span>{% endif %}
+    </div>
 
     <div class="journey">
       <div class="side">

@@ -117,7 +117,8 @@ def strongest_routes(benefits: BenefitsCatalog, catalog: Catalog, limit: int = 6
 
 
 def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Path | str | None = None,
-               today: Callable[[], date] = date.today, secret: str = "") -> FastAPI:
+               today: Callable[[], date] = date.today, secret: str = "", admin_id: int = 0,
+               site_url: str = "") -> FastAPI:
     app = FastAPI(title="Бвишечка", docs_url="/api/docs", redoc_url=None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     app.mount("/assets", StaticFiles(directory=HERE.parent / "assets"), name="assets")
@@ -186,6 +187,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             benefit_types=BENEFIT_TYPES, diplomas=DIPLOMAS, uni_slug=uni_slug, levels_label=levels_label,
             olympiad_count=olympiad_count, university_count=len(universities), user=user, user_name=name,
             csrf=csrf_token(request) if user else "", short=short, diploma_years=diploma_years,
+            is_admin=bool(admin_id) and user == admin_id,
         )
         return templates.TemplateResponse(request, template, {**base, **context}, status_code=status_code)
 
@@ -469,6 +471,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             followed_unis = s.university_subscriptions(user)
             stages = sorted((st for oid in followed_ids for st in s.upcoming_stages(oid, today(), limit=4)),
                             key=lambda st: st.starts_at or date.max)
+            code = s.user_code(user)
+            has_roadmap = s.crm_client(user) is not None
         diplomas = []
         best_by_uni: dict[str, str] = {}
         for d in raw_diplomas:
@@ -490,7 +494,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             next_stage.setdefault(catalog.canonical_id(st.olympiad_id), st)
         return render(request, "me.html", profile=profile, diplomas=diplomas, targets=targets,
                       olympiads_followed=olympiads_followed, next_stage=next_stage, stages=stages[:12],
-                      today=today(), best_by_uni=best_by_uni, all_universities=universities)
+                      today=today(), best_by_uni=best_by_uni, all_universities=universities, code=code,
+                      has_roadmap=has_roadmap)
 
     @app.post("/me/profile")
     def me_profile(request: Request, csrf: str = Form(""), name: str = Form(""), grade: int = Form(0)):
@@ -574,6 +579,274 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         response = RedirectResponse("/", status_code=303)
         response.delete_cookie(SESSION_COOKIE)
         return response
+
+    # -- сопровождение: роадмап клиента и админка куратора ----------------------
+
+    from app import crm
+
+    def roadmap_for(s: Storage, user: int) -> crm.Roadmap:
+        return crm.build_roadmap(catalog, benefits, s.crm_goals(user), s.crm_olympiads(user), s.stages, today())
+
+    def upcoming_for(s: Storage, rm: crm.Roadmap, limit: int = 6) -> list[tuple[date, str, str]]:
+        """Ближайшие даты плана: (дата, что, олимпиада) — конец регистрации и этапы с сайтов олимпиад."""
+        found: list[tuple[date, str, str]] = []
+        for it in rm.items:
+            name = short(it.olympiad)
+            if it.status in crm.DEADLINE_STATUSES and it.deadline and it.deadline >= today():
+                found.append((it.deadline, "конец регистрации", name))
+            if it.status in ("todo", "registration", "registered", "qualifying", "passed", "final"):
+                for st in s.upcoming_stages(it.olympiad.id, today(), limit=3):
+                    if st.kind != "registration" and (not st.profile or st.profile == it.profile):
+                        found.append((st.starts_at or st.ends_at, st.title or st.kind_label, name))
+        return sorted({f for f in found if f[0]})[:limit]
+
+    def roadmap_page(request: Request, user: int, *, shared: bool):
+        with db() as s:
+            client = s.crm_client(user)
+            if client is None:
+                return None
+            rm = roadmap_for(s, user)
+            upcoming = upcoming_for(s, rm)
+        return render(request, "roadmap.html", client=client, rm=rm, upcoming=upcoming, shared=shared,
+                      today=today(), benefit_short=crm.BENEFIT_SHORT, site_url=site_url)
+
+    @app.get("/me/roadmap", response_class=HTMLResponse)
+    def me_roadmap(request: Request):
+        user = current_user(request)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        return roadmap_page(request, user, shared=False) or RedirectResponse("/me", status_code=303)
+
+    @app.get("/r/{token}", response_class=HTMLResponse)
+    def shared_roadmap(request: Request, token: str):
+        """Ссылка для родителей: только просмотр, без входа."""
+        with db() as s:
+            user = s.crm_client_by_token(token)
+        page = roadmap_page(request, user, shared=True) if user else None
+        if page is None:
+            raise HTTPException(404, "Ссылка не найдена")
+        page.headers["X-Robots-Tag"] = "noindex"
+        return page
+
+    def require_admin(request: Request) -> int:
+        user = current_user(request)
+        if not admin_id or user != admin_id:
+            raise HTTPException(404, "Такой страницы нет")
+        return user
+
+    def admin_post(request: Request, csrf: str) -> None:
+        if check_csrf(request, csrf) != admin_id or not admin_id:
+            raise HTTPException(404, "Такой страницы нет")
+
+    def client_by_code(s: Storage, code: str) -> int:
+        user = s.user_by_code(code)
+        if user is None or s.crm_client(user) is None:
+            raise HTTPException(404, "Клиент не найден")
+        return user
+
+    def notify(s: Storage, user: int, text: str) -> None:
+        client = s.crm_client(user)
+        if client and client["notify"]:
+            s.queue_message(user, text)
+
+    def attention(rm: crm.Roadmap) -> list[str]:
+        """Что требует внимания куратора по клиенту."""
+        out = []
+        for it in rm.items:
+            if it.status not in crm.DEADLINE_STATUSES:
+                continue
+            if it.deadline and 0 <= (it.deadline - today()).days <= 7:
+                out.append(f"регистрация на {short(it.olympiad)} до {it.deadline:%d.%m}")
+            elif it.deadline is None and it.status == "registration":
+                out.append(f"нет даты регистрации: {short(it.olympiad)}")
+        return out
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_clients(request: Request, group: int = 0, q: str = "", error: str = ""):
+        require_admin(request)
+        q = " ".join(q.split()).lower()[:60]
+        rows = []
+        with db() as s:
+            groups = s.crm_groups()
+            for c in s.crm_clients(group or None):
+                if q and q not in (c["name"] or "").lower() and q.replace(" ", "") not in (c["code"] or ""):
+                    continue
+                rm = roadmap_for(s, c["telegram_id"])
+                rows.append(dict(c, rm=rm, goals=[g.university for g in rm.goals], attention=attention(rm),
+                                 upcoming=upcoming_for(s, rm, limit=1)))
+            total = len(s.crm_clients())
+        return render(request, "admin.html", rows=rows, groups=groups, group=group, q=q, total=total,
+                      error="Нет пользователя с таким ID — пусть клиент войдёт на сайт и пришлёт ID из кабинета"
+                      if error == "nouser" else "", attention_total=sum(len(r["attention"]) for r in rows))
+
+    @app.post("/admin/open")
+    def admin_open(request: Request, csrf: str = Form(""), code: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            user = s.user_by_code(code)
+            if user is None:
+                return RedirectResponse("/admin?error=nouser", status_code=303)
+            if s.crm_enable(user):
+                s.crm_log(user, "Сопровождение включено")
+            real = s.user_code(user)
+        return RedirectResponse(f"/admin/client/{real}", status_code=303)
+
+    @app.post("/admin/groups")
+    def admin_add_group(request: Request, csrf: str = Form(""), name: str = Form("")):
+        admin_post(request, csrf)
+        name = " ".join(name.split())[:60]
+        if name:
+            with db() as s:
+                gid = s.crm_add_group(name)
+            return RedirectResponse(f"/admin?group={gid}", status_code=303)
+        return RedirectResponse("/admin", status_code=303)
+
+    @app.post("/admin/groups/{group_id}/delete")
+    def admin_delete_group(request: Request, group_id: int, csrf: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            s.crm_delete_group(group_id)
+        return RedirectResponse("/admin", status_code=303)
+
+    @app.get("/admin/client/{code}", response_class=HTMLResponse)
+    def admin_client(request: Request, code: str, q: str = ""):
+        require_admin(request)
+        q = " ".join(q.split())[:100]
+        with db() as s:
+            user = client_by_code(s, code)
+            client = s.crm_client(user)
+            goals = s.crm_goals(user)
+            rm = roadmap_for(s, user)
+            events = s.crm_events(user)
+            groups = s.crm_groups()
+        taken = {(it.olympiad.id, it.profile) for it in rm.items}
+        hits = []
+        if q:
+            year = catalog.current_year
+            for h in catalog.search(q, limit=10):
+                profiles = sorted(h.olympiad.profiles_in(year)) or sorted(h.olympiad.profiles)
+                hits.append((h.olympiad, profiles))
+        uni_programs = {u.university: [(p, program_label(p, names)) for p in university_programs(u)]
+                        for u in universities}
+        return render(request, "admin_client.html", client=client, rm=rm, events=events, groups=groups,
+                      q=q, hits=hits, suggestions=crm.suggestions(catalog, benefits, goals, taken),
+                      statuses=crm.STATUSES, uni_programs=uni_programs, benefit_short=crm.BENEFIT_SHORT,
+                      site_url=site_url, today=today(), attention=attention(rm))
+
+    @app.post("/admin/client/{code}/settings")
+    def admin_client_settings(request: Request, code: str, csrf: str = Form(""), group_id: int = Form(0),
+                              notes: str = Form(""), notify_on: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            user = client_by_code(s, code)
+            valid = {g["id"] for g in s.crm_groups()}
+            s.crm_update_client(user, group_id=group_id if group_id in valid else None, notes=notes[:4000],
+                                notify=1 if notify_on else 0)
+        return RedirectResponse(f"/admin/client/{code}", status_code=303)
+
+    @app.post("/admin/client/{code}/goals")
+    def admin_add_goal(request: Request, code: str, csrf: str = Form(""), university: str = Form(""),
+                       program: str = Form("")):
+        admin_post(request, csrf)
+        u = benefits.get(university)
+        if u is None:
+            raise HTTPException(422, "Нет такого вуза")
+        if program and program not in university_programs(u):
+            program = ""
+        with db() as s:
+            user = client_by_code(s, code)
+            if s.crm_add_goal(user, u.university, program):
+                s.crm_log(user, f"Цель: {u.university}" + (f", {program_label(program, names)}" if program else ""))
+        return RedirectResponse(f"/admin/client/{code}#goals", status_code=303)
+
+    @app.post("/admin/client/{code}/goals/{goal_id}/delete")
+    def admin_delete_goal(request: Request, code: str, goal_id: int, csrf: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            s.crm_delete_goal(client_by_code(s, code), goal_id)
+        return RedirectResponse(f"/admin/client/{code}#goals", status_code=303)
+
+    @app.post("/admin/client/{code}/olympiads")
+    def admin_add_olympiad(request: Request, code: str, csrf: str = Form(""), olympiad_id: str = Form(""),
+                           profile: str = Form(""), to_group: str = Form("")):
+        admin_post(request, csrf)
+        o = get_olympiad(catalog.canonical_id(olympiad_id))
+        if profile and profile not in o.profiles:
+            raise HTTPException(422, "У олимпиады нет такого профиля")
+        with db() as s:
+            user = client_by_code(s, code)
+            client = s.crm_client(user)
+            members = s.crm_group_members(client["group_id"]) if to_group and client["group_id"] else [user]
+            name = short(o) + (f", {profile}" if profile else "")
+            for member in members:
+                if s.crm_add_olympiad(member, o.id, profile):
+                    s.subscribe(member, o.id)   # обычные напоминания бота о регистрации и этапах
+                    s.crm_log(member, f"Добавлена олимпиада: {name}")
+                    notify(s, member, f"<b>В план добавлена олимпиада</b>\n{crm.escape(name)}. "
+                                      "Напомним о регистрации и этапах.")
+        return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
+
+    @app.post("/admin/client/{code}/olympiads/{row_id}/status")
+    def admin_set_status(request: Request, code: str, row_id: int, csrf: str = Form(""), status: str = Form("")):
+        admin_post(request, csrf)
+        if status not in crm.STATUSES:
+            raise HTTPException(422, "Нет такого статуса")
+        with db() as s:
+            user = client_by_code(s, code)
+            row = s.crm_olympiad(user, row_id)
+            if row is None:
+                raise HTTPException(404, "Олимпиада не найдена")
+            if row["status"] != status:
+                s.crm_set_status(user, row_id, status)
+                o = catalog.get(row["olympiad_id"])
+                name = short(o) if o else row["olympiad_id"]
+                s.crm_log(user, f"{name}: {crm.STATUSES[row['status']][0]} → {crm.STATUSES[status][0]}")
+                notify(s, user, crm.status_message(name, row["profile"], status, site_url))
+        return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
+
+    @app.post("/admin/client/{code}/olympiads/{row_id}/deadline")
+    def admin_set_deadline(request: Request, code: str, row_id: int, csrf: str = Form(""),
+                           deadline: str = Form("")):
+        admin_post(request, csrf)
+        try:
+            value = date.fromisoformat(deadline) if deadline else None
+        except ValueError:
+            raise HTTPException(422, "Дата в формате ГГГГ-ММ-ДД") from None
+        with db() as s:
+            s.crm_set_deadline(client_by_code(s, code), row_id, value)
+        return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
+
+    @app.post("/admin/client/{code}/olympiads/{row_id}/delete")
+    def admin_delete_olympiad(request: Request, code: str, row_id: int, csrf: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            user = client_by_code(s, code)
+            row = s.crm_olympiad(user, row_id)
+            if row:
+                s.crm_delete_olympiad(user, row_id)
+                o = catalog.get(row["olympiad_id"])
+                s.crm_log(user, f"Убрана олимпиада: {short(o) if o else row['olympiad_id']}")
+        return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
+
+    @app.post("/admin/client/{code}/message")
+    def admin_message(request: Request, code: str, csrf: str = Form(""), text: str = Form("")):
+        admin_post(request, csrf)
+        text = text.strip()[:2000]
+        if text:
+            with db() as s:
+                user = client_by_code(s, code)
+                s.queue_message(user, "<b>Сообщение от куратора</b>\n" + crm.escape(text))
+                s.crm_log(user, "Сообщение клиенту: " + text[:200])
+        return RedirectResponse(f"/admin/client/{code}", status_code=303)
+
+    @app.post("/admin/client/{code}/disable")
+    def admin_disable(request: Request, code: str, csrf: str = Form(""), confirm: str = Form("")):
+        admin_post(request, csrf)
+        if confirm.strip().lower() != "выключить":
+            return RedirectResponse(f"/admin/client/{code}#danger", status_code=303)
+        with db() as s:
+            s.crm_disable(client_by_code(s, code))
+        return RedirectResponse("/admin", status_code=303)
 
     # -- JSON ------------------------------------------------------------------
 

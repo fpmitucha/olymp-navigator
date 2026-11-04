@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Клиенты · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <div class="adm-head">
+    <h1>Клиенты <span class="muted">{{ total }}</span></h1>
+    <form class="adm-open" method="post" action="/admin/open">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="open-code">Открыть сопровождение по ID</label>
+      <input id="open-code" class="field" name="code" inputmode="numeric" placeholder="например, 482913" required>
+      <button class="btn" type="submit">Открыть</button>
+    </form>
+  </div>
+  {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+
+  {% if attention_total %}
+  <div class="adm-alert"><b>Требует внимания:</b> {{ attention_total }} — см. колонку «Внимание»</div>
+  {% endif %}
+
+  <div class="adm-groups">
+    <a class="chip {{ 'on' if not group }}" href="/admin">Все · {{ total }}</a>
+    {% for g in groups %}<a class="chip {{ 'on' if group == g.id }}" href="/admin?group={{ g.id }}">{{ g.name }} · {{ g.size }}</a>{% endfor %}
+    <details class="adm-newgroup">
+      <summary class="chip add">+ Новая группа</summary>
+      <form method="post" action="/admin/groups" class="adm-inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input class="field" name="name" maxlength="60" placeholder="11 класс, ноябрь" aria-label="Название группы" required>
+        <button class="btn small" type="submit">Создать</button>
+      </form>
+    </details>
+    <form method="get" action="/admin" class="adm-search">
+      {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
+      <input class="field" type="search" name="q" value="{{ q }}" placeholder="Имя или ID" aria-label="Поиск клиента">
+    </form>
+  </div>
+
+  {% if group %}
+  {% for g in groups if g.id == group %}
+  <form method="post" action="/admin/groups/{{ g.id }}/delete" class="adm-inline small" onsubmit="return confirm('Удалить группу? Клиенты останутся в списке.')">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="linkbtn" type="submit">Удалить группу «{{ g.name }}»</button>
+  </form>
+  {% endfor %}
+  {% endif %}
+
+  <div class="adm-table">
+    <table>
+      <thead><tr><th>Клиент</th><th>Класс</th><th>Группа</th><th>Цель</th><th>Прогресс</th><th>Ближайшее</th><th>Внимание</th></tr></thead>
+      <tbody>
+      {% for c in rows %}
+        <tr>
+          <td><a class="strong" href="/admin/client/{{ c.code }}">{{ c.name or 'Без имени' }}</a><div class="muted small">ID {{ c.code }}</div></td>
+          <td>{{ c.grade or '—' }}</td>
+          <td>{{ c.group_name or '—' }}</td>
+          <td class="small">{{ c.goals|join(', ') or '—' }}</td>
+          <td class="prog">
+            {% set t = c.rm.total or 1 %}
+            <div class="bar"><span class="d" style="width: {{ (100 * c.rm.done / t)|round|int }}%"></span><span class="n" style="width: {{ (100 * c.rm.now / t)|round|int }}%"></span></div>
+            <span class="muted small">{{ c.rm.done }} из {{ c.rm.total }} шагов</span>
+          </td>
+          <td class="small">{% for d, what, name in c.upcoming %}{{ d.strftime('%d.%m') }} · {{ name }}, {{ what }}{% else %}—{% endfor %}</td>
+          <td>{% for a in c.attention %}<span class="tag alert">{{ a }}</span>{% else %}<span class="ok small">всё по плану</span>{% endfor %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">Пока никого. Попроси клиента войти на сайт и назвать ID из кабинета — и открой ему сопровождение формой выше.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

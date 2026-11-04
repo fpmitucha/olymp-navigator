@@ -31,6 +31,11 @@ IP=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | aw
 if ! grep -q '^DOMAIN=' .env && ! grep -q '^CADDYFILE=' .env; then
   printf 'CADDYFILE=Caddyfile.ip\nSERVER_IP=%s\n' "$IP" >> .env
 fi
+# адрес сайта для ссылок в сообщениях бота (роадмап сопровождения)
+if ! grep -q '^SITE_URL=' .env; then
+  D=$(grep '^DOMAIN=' .env | cut -d= -f2)
+  echo "SITE_URL=https://${D:-$IP}" >> .env
+fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow 80 >/dev/null; ufw allow 443 >/dev/null

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name or 'Клиент' }} · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+{% set base = '/admin/client/' ~ client.code %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin">← Все клиенты</a>
+  <div class="adm-head">
+    <div>
+      <h1>{{ client.name or 'Без имени' }}</h1>
+      <p class="muted">ID {{ client.code }}{% if client.grade %} · {{ client.grade }} класс{% endif %} · сопровождение с {{ client.created_at[:10] }}</p>
+    </div>
+    <div class="adm-actions">
+      <a class="btn ghost small" href="/r/{{ client.share_token }}" target="_blank" rel="noopener">Как видят родители</a>
+      <input class="field small-field" readonly value="{{ site_url or request.base_url|string|trim('/') }}/r/{{ client.share_token }}" aria-label="Ссылка для родителей" onclick="this.select()">
+    </div>
+  </div>
+  {% if attention %}<div class="adm-alert"><b>Требует внимания:</b> {{ attention|join(' · ') }}</div>{% endif %}
+
+  <div class="rm-cols">
+    <div class="rm-main">
+
+      <section class="adm-card" id="goals">
+        <h2>Цель</h2>
+        <div class="adm-goals">
+          {% for g in rm.goals %}
+          <form method="post" action="{{ base }}/goals/{{ g.id }}/delete" class="goal-chip">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <span><b>{{ g.university }}</b>{% if g.program %} · {{ g.program }}{% endif %}{% if g.bvi %} <span class="ok">· БВИ: {{ g.bvi }}</span>{% endif %}</span>
+            <button type="submit" aria-label="Убрать цель">×</button>
+          </form>
+          {% else %}<p class="muted small">Цели не заданы — добавь вуз и программу, тогда у олимпиад появятся льготы и подсказки.</p>{% endfor %}
+        </div>
+        <form method="post" action="{{ base }}/goals" class="adm-inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <select class="field" name="university" aria-label="Вуз" required onchange="for (const o of this.form.program.querySelectorAll('[data-uni]')) o.hidden = o.dataset.uni !== this.value; this.form.program.value = ''">
+            <option value="">Вуз…</option>
+            {% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}
+          </select>
+          <select class="field" name="program" aria-label="Программа">
+            <option value="">любая программа</option>
+            {% for uni, progs in uni_programs.items() %}{% for p, label in progs %}<option data-uni="{{ uni }}" value="{{ p }}" hidden>{{ label }}</option>{% endfor %}{% endfor %}
+          </select>
+          <button class="btn small" type="submit">+ Добавить цель</button>
+        </form>
+      </section>
+
+      <section class="adm-card" id="olympiads">
+        <div class="rm-head"><h2>Олимпиады</h2>{% if client.notify %}<span class="muted small">смена статуса уходит клиенту в Telegram</span>{% else %}<span class="muted small">уведомления клиенту выключены</span>{% endif %}</div>
+        <div class="adm-table flat">
+          <table>
+            <thead><tr><th>Олимпиада</th><th>Льготы в целях</th><th>Статус</th><th>Регистрация до</th></tr></thead>
+            <tbody>
+            {% for it in rm.items %}
+              <tr>
+                <td><a class="strong" href="/olympiad/{{ it.olympiad.id }}">{{ short(it.olympiad) }}</a>{% if it.profile %}<div class="muted small">{{ it.profile }}</div>{% endif %}
+                  <form method="post" action="{{ base }}/olympiads/{{ it.row_id }}/delete" onsubmit="return confirm('Убрать олимпиаду из плана?')">
+                    <input type="hidden" name="csrf" value="{{ csrf }}">
+                    <button class="linkbtn small" type="submit">Убрать</button>
+                  </form>
+                </td>
+                <td class="small ok">{% for uni, b, who in it.benefits %}<div class="nowrap">{{ uni }} · {{ benefit_short[b] }}{% if who == 'winner' %} (победителю){% endif %}</div>{% else %}<span class="muted">—</span>{% endfor %}</td>
+                <td>
+                  <form method="post" action="{{ base }}/olympiads/{{ it.row_id }}/status">
+                    <input type="hidden" name="csrf" value="{{ csrf }}">
+                    <select class="field" name="status" aria-label="Статус" onchange="this.form.submit()">
+                      {% for key, v in statuses.items() %}<option value="{{ key }}" {% if key == it.status %}selected{% endif %}>{{ v[0] }}</option>{% endfor %}
+                    </select>
+                    <noscript><button class="btn small" type="submit">OK</button></noscript>
+                  </form>
+                </td>
+                <td>
+                  <form method="post" action="{{ base }}/olympiads/{{ it.row_id }}/deadline" class="adm-inline">
+                    <input type="hidden" name="csrf" value="{{ csrf }}">
+                    <input class="field" type="date" name="deadline" value="{{ it.deadline.isoformat() if it.deadline_manual and it.deadline else '' }}" aria-label="Дата конца регистрации" onchange="this.form.submit()">
+                  </form>
+                  {% set waiting = it.status in ['todo', 'registration'] %}
+                  <div class="small {{ 'warn' if waiting and not it.deadline else 'muted' }}">{% if it.deadline_manual %}задано вручную{% elif it.deadline %}с сайта олимпиады: {{ it.deadline.strftime('%d.%m.%Y') }}{% elif waiting %}нет даты — поставь вручную{% else %}уже не нужно{% endif %}</div>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="muted">Олимпиад пока нет — найди ниже.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <form method="get" action="{{ base }}#add" class="adm-inline" id="add">
+          <input class="field grow" type="search" name="q" value="{{ q }}" placeholder="Добавить олимпиаду: начни вводить название" aria-label="Найти олимпиаду">
+          <button class="btn small ghost" type="submit">Найти</button>
+        </form>
+        {% for o, profiles in hits %}
+        <form method="post" action="{{ base }}/olympiads" class="adm-hit">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="olympiad_id" value="{{ o.id }}">
+          <b>{{ short(o) }}</b>
+          <select class="field" name="profile" aria-label="Профиль">{% for p in profiles %}<option>{{ p }}</option>{% else %}<option value="">—</option>{% endfor %}</select>
+          {% if client.group_id %}<label class="small"><input type="checkbox" name="to_group" value="1"> всей группе «{{ client.group_name }}»</label>{% endif %}
+          <button class="btn small" type="submit">Добавить</button>
+        </form>
+        {% endfor %}
+        {% if q and not hits %}<p class="muted small">Ничего не нашлось.</p>{% endif %}
+
+        {% if suggestions %}
+        <p class="muted small" style="margin:16px 0 8px">Подходят под цели клиента (БВИ призёру):</p>
+        <div class="adm-suggest">
+          {% for o, profile, unis in suggestions %}
+          <form method="post" action="{{ base }}/olympiads">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="olympiad_id" value="{{ o.id }}">
+            <input type="hidden" name="profile" value="{{ profile }}">
+            <button class="chip" type="submit">+ {{ short(o) }}, {{ profile }} · {{ unis|join(', ') }}</button>
+          </form>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </section>
+    </div>
+
+    <aside class="rm-side">
+      <section class="adm-card">
+        <h2>Сообщение клиенту</h2>
+        <form method="post" action="{{ base }}/message" class="stack">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <textarea class="field" name="text" rows="3" maxlength="2000" placeholder="Например: не забудь решить онлайн-тур до 30 ноября" aria-label="Текст сообщения" required></textarea>
+          <button class="btn" type="submit">Отправить в Telegram</button>
+        </form>
+      </section>
+
+      <section class="adm-card">
+        <h2>Настройки и заметки</h2>
+        <form method="post" action="{{ base }}/settings" class="stack">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="small">Группа
+            <select class="field" name="group_id"><option value="0">без группы</option>{% for g in groups %}<option value="{{ g.id }}" {% if g.id == client.group_id %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select>
+          </label>
+          <label class="small check"><input type="checkbox" name="notify_on" value="1" {% if client.notify %}checked{% endif %}> Сообщать о смене статусов</label>
+          <label class="small">Заметки — клиент их не видит
+            <textarea class="field" name="notes" rows="5" maxlength="4000">{{ client.notes }}</textarea>
+          </label>
+          <button class="btn small" type="submit">Сохранить</button>
+        </form>
+      </section>
+
+      <section class="adm-card">
+        <h2>История</h2>
+        <ul class="adm-log">
+          {% for e in events %}<li><span class="muted small">{{ e.created_at[:16]|replace('T', ' ') }} UTC</span>{{ e.text }}</li>{% else %}<li class="muted small">Пока пусто</li>{% endfor %}
+        </ul>
+      </section>
+
+      <details class="adm-card" id="danger">
+        <summary class="danger">Выключить сопровождение</summary>
+        <form method="post" action="{{ base }}/disable" class="stack" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="small">Удалятся цели, олимпиады, заметки и история. Напиши «выключить»
+            <input class="field" name="confirm" autocomplete="off"></label>
+          <button class="btn small" type="submit">Выключить</button>
+        </form>
+      </details>
+    </aside>
+  </div>
+</div>
+{% endblock %}

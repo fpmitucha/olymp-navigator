@@ -8,6 +8,7 @@ SQLite выбран для старта: не нужен отдельный се
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -107,6 +108,55 @@ CREATE TABLE IF NOT EXISTS notification_log (
     kind         TEXT NOT NULL,
     sent_at      TEXT NOT NULL,
     PRIMARY KEY (telegram_id, stage_id, kind)
+);
+-- сопровождение (CRM): куратор включает его пользователю по короткому ID из кабинета
+CREATE TABLE IF NOT EXISTS user_code (
+    telegram_id  INTEGER PRIMARY KEY REFERENCES bot_user(telegram_id) ON DELETE CASCADE,
+    code         TEXT NOT NULL UNIQUE           -- 6 цифр: его видно в кабинете, по нему куратор находит клиента
+);
+CREATE TABLE IF NOT EXISTS crm_group (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS crm_client (
+    telegram_id  INTEGER PRIMARY KEY REFERENCES bot_user(telegram_id) ON DELETE CASCADE,
+    group_id     INTEGER REFERENCES crm_group(id) ON DELETE SET NULL,
+    notes        TEXT NOT NULL DEFAULT '',      -- заметки куратора, клиент их не видит
+    share_token  TEXT NOT NULL UNIQUE,          -- ссылка «только просмотр» для родителей
+    notify       INTEGER NOT NULL DEFAULT 1,    -- сообщать клиенту в Telegram о смене статусов
+    created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS crm_goal (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id  INTEGER NOT NULL REFERENCES crm_client(telegram_id) ON DELETE CASCADE,
+    university   TEXT NOT NULL,
+    program      TEXT NOT NULL DEFAULT '',      -- '' — любая программа вуза
+    created_at   TEXT NOT NULL,
+    UNIQUE (telegram_id, university, program)
+);
+CREATE TABLE IF NOT EXISTS crm_olympiad (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id   INTEGER NOT NULL REFERENCES crm_client(telegram_id) ON DELETE CASCADE,
+    olympiad_id   TEXT NOT NULL,
+    profile       TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'todo',
+    reg_deadline  TEXT,                         -- вручную; пусто — берём конец регистрации с сайта олимпиады
+    updated_at    TEXT NOT NULL,
+    UNIQUE (telegram_id, olympiad_id, profile)
+);
+CREATE TABLE IF NOT EXISTS crm_event (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id  INTEGER NOT NULL REFERENCES crm_client(telegram_id) ON DELETE CASCADE,
+    text         TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outbox (               -- сообщения с сайта, которые бот отправит в Telegram
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id  INTEGER NOT NULL,
+    text         TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    sent_at      TEXT
 );
 """
 
@@ -415,7 +465,7 @@ class Storage:
     def delete_user_data(self, telegram_id: int) -> None:
         """«Удалить мои данные» в кабинете: профиль, дипломы, подписки, сессии, заявки."""
         for table in ("user_diploma", "user_profile", "web_session", "subscription", "university_subscription",
-                      "help_request"):
+                      "help_request", "crm_client", "user_code", "outbox"):
             self.conn.execute(f"DELETE FROM {table} WHERE telegram_id = ?", (telegram_id,))  # noqa: S608
         self.conn.commit()
 
@@ -480,4 +530,161 @@ class Storage:
             "INSERT OR IGNORE INTO notification_log (telegram_id, stage_id, kind, sent_at) VALUES (?, ?, ?, ?)",
             (telegram_id, stage_id, kind, _now()),
         )
+        self.conn.commit()
+
+    # -- сопровождение (CRM) -------------------------------------------------
+
+    def user_code(self, telegram_id: int) -> str:
+        """Короткий ID пользователя для куратора (создаётся при первом входе в кабинет)."""
+        row = self.conn.execute("SELECT code FROM user_code WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        if row:
+            return row["code"]
+        self.touch_user(telegram_id)
+        while True:
+            code = str(secrets.randbelow(900000) + 100000)
+            try:
+                self.conn.execute("INSERT INTO user_code (telegram_id, code) VALUES (?, ?)", (telegram_id, code))
+                self.conn.commit()
+                return code
+            except sqlite3.IntegrityError:
+                continue  # такой код уже занят — берём другой
+
+    def user_by_code(self, code: str) -> int | None:
+        row = self.conn.execute("SELECT telegram_id FROM user_code WHERE code = ?",
+                                ("".join(ch for ch in code if ch.isdigit()),)).fetchone()
+        return row["telegram_id"] if row else None
+
+    def crm_enable(self, telegram_id: int) -> bool:
+        """Включить сопровождение. True — если включили только что."""
+        self.touch_user(telegram_id)
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO crm_client (telegram_id, share_token, created_at) VALUES (?, ?, ?)",
+            (telegram_id, secrets.token_urlsafe(16), _now()))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def crm_disable(self, telegram_id: int) -> None:
+        self.conn.execute("DELETE FROM crm_client WHERE telegram_id = ?", (telegram_id,))
+        self.conn.commit()
+
+    def crm_client(self, telegram_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT c.*, g.name AS group_name, p.name, p.grade, uc.code FROM crm_client c "
+            "LEFT JOIN crm_group g ON g.id = c.group_id LEFT JOIN user_profile p ON p.telegram_id = c.telegram_id "
+            "LEFT JOIN user_code uc ON uc.telegram_id = c.telegram_id WHERE c.telegram_id = ?",
+            (telegram_id,)).fetchone()
+        return dict(row) if row else None
+
+    def crm_client_by_token(self, token: str) -> int | None:
+        row = self.conn.execute("SELECT telegram_id FROM crm_client WHERE share_token = ?", (token,)).fetchone()
+        return row["telegram_id"] if row else None
+
+    def crm_clients(self, group_id: int | None = None) -> list[dict]:
+        sql = ("SELECT c.telegram_id, c.group_id, c.created_at, g.name AS group_name, p.name, p.grade, uc.code "
+               "FROM crm_client c LEFT JOIN crm_group g ON g.id = c.group_id "
+               "LEFT JOIN user_profile p ON p.telegram_id = c.telegram_id "
+               "LEFT JOIN user_code uc ON uc.telegram_id = c.telegram_id")
+        params: tuple = ()
+        if group_id:
+            sql += " WHERE c.group_id = ?"
+            params = (group_id,)
+        return [dict(r) for r in self.conn.execute(sql + " ORDER BY c.created_at DESC", params).fetchall()]
+
+    def crm_update_client(self, telegram_id: int, **fields) -> None:
+        allowed = {"group_id", "notes", "notify"}
+        for key, value in fields.items():
+            if key in allowed:
+                self.conn.execute(f"UPDATE crm_client SET {key} = ? WHERE telegram_id = ?",  # noqa: S608
+                                  (value, telegram_id))
+        self.conn.commit()
+
+    def crm_groups(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT g.id, g.name, count(c.telegram_id) AS size FROM crm_group g "
+            "LEFT JOIN crm_client c ON c.group_id = g.id GROUP BY g.id ORDER BY g.name").fetchall()
+        return [dict(r) for r in rows]
+
+    def crm_add_group(self, name: str) -> int:
+        self.conn.execute("INSERT OR IGNORE INTO crm_group (name, created_at) VALUES (?, ?)", (name, _now()))
+        self.conn.commit()
+        return self.conn.execute("SELECT id FROM crm_group WHERE name = ?", (name,)).fetchone()["id"]
+
+    def crm_delete_group(self, group_id: int) -> None:
+        self.conn.execute("DELETE FROM crm_group WHERE id = ?", (group_id,))
+        self.conn.commit()
+
+    def crm_group_members(self, group_id: int) -> list[int]:
+        return [r[0] for r in self.conn.execute("SELECT telegram_id FROM crm_client WHERE group_id = ?", (group_id,))]
+
+    def crm_goals(self, telegram_id: int) -> list[dict]:
+        rows = self.conn.execute("SELECT id, university, program FROM crm_goal WHERE telegram_id = ? ORDER BY id",
+                                 (telegram_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def crm_add_goal(self, telegram_id: int, university: str, program: str) -> bool:
+        cur = self.conn.execute("INSERT OR IGNORE INTO crm_goal (telegram_id, university, program, created_at) "
+                                "VALUES (?, ?, ?, ?)", (telegram_id, university, program, _now()))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def crm_delete_goal(self, telegram_id: int, goal_id: int) -> None:
+        self.conn.execute("DELETE FROM crm_goal WHERE id = ? AND telegram_id = ?", (goal_id, telegram_id))
+        self.conn.commit()
+
+    def crm_olympiads(self, telegram_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, olympiad_id, profile, status, reg_deadline, updated_at FROM crm_olympiad "
+            "WHERE telegram_id = ? ORDER BY id", (telegram_id,)).fetchall()
+        return [dict(r, reg_deadline=_date(r["reg_deadline"])) for r in rows]
+
+    def crm_olympiad(self, telegram_id: int, row_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM crm_olympiad WHERE id = ? AND telegram_id = ?",
+                                (row_id, telegram_id)).fetchone()
+        return dict(row, reg_deadline=_date(row["reg_deadline"])) if row else None
+
+    def crm_add_olympiad(self, telegram_id: int, olympiad_id: str, profile: str) -> bool:
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO crm_olympiad (telegram_id, olympiad_id, profile, updated_at) VALUES (?, ?, ?, ?)",
+            (telegram_id, olympiad_id, profile, _now()))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def crm_delete_olympiad(self, telegram_id: int, row_id: int) -> None:
+        self.conn.execute("DELETE FROM crm_olympiad WHERE id = ? AND telegram_id = ?", (row_id, telegram_id))
+        self.conn.commit()
+
+    def crm_set_status(self, telegram_id: int, row_id: int, status: str) -> None:
+        self.conn.execute("UPDATE crm_olympiad SET status = ?, updated_at = ? WHERE id = ? AND telegram_id = ?",
+                          (status, _now(), row_id, telegram_id))
+        self.conn.commit()
+
+    def crm_set_deadline(self, telegram_id: int, row_id: int, deadline: date | None) -> None:
+        self.conn.execute("UPDATE crm_olympiad SET reg_deadline = ?, updated_at = ? WHERE id = ? AND telegram_id = ?",
+                          (deadline.isoformat() if deadline else None, _now(), row_id, telegram_id))
+        self.conn.commit()
+
+    def crm_log(self, telegram_id: int, text: str) -> None:
+        self.conn.execute("INSERT INTO crm_event (telegram_id, text, created_at) VALUES (?, ?, ?)",
+                          (telegram_id, text[:500], _now()))
+        self.conn.commit()
+
+    def crm_events(self, telegram_id: int, limit: int = 30) -> list[dict]:
+        rows = self.conn.execute("SELECT text, created_at FROM crm_event WHERE telegram_id = ? "
+                                 "ORDER BY id DESC LIMIT ?", (telegram_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- исходящие сообщения (сайт → бот → Telegram) -----------------------
+
+    def queue_message(self, telegram_id: int, text: str) -> None:
+        self.conn.execute("INSERT INTO outbox (telegram_id, text, created_at) VALUES (?, ?, ?)",
+                          (telegram_id, text, _now()))
+        self.conn.commit()
+
+    def pending_messages(self, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute("SELECT id, telegram_id, text FROM outbox WHERE sent_at IS NULL ORDER BY id LIMIT ?",
+                                 (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_message_sent(self, message_id: int) -> None:
+        self.conn.execute("UPDATE outbox SET sent_at = ? WHERE id = ?", (_now(), message_id))
         self.conn.commit()

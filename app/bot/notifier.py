@@ -361,3 +361,34 @@ async def help_requests_loop(db_path: str, catalog: Catalog, send: SendFn, admin
         finally:
             storage.close()
         await asyncio.sleep(interval)
+
+
+async def send_outbox(storage: Storage, send: SendFn) -> int:
+    """Отправляет сообщения, которые сайт положил в очередь (сопровождение: статусы, сообщения куратора)."""
+    sent = 0
+    for msg in storage.pending_messages():
+        try:
+            await send(msg["telegram_id"], msg["text"])
+            sent += 1
+        except TemporaryError:
+            break  # сеть — повторим в следующий проход
+        except UserBlocked:
+            storage.deactivate_user(msg["telegram_id"])
+        except Exception:  # noqa: BLE001 — одно сломанное сообщение не держит очередь
+            log.exception("Не отправилось сообщение #%s из очереди", msg["id"])
+        storage.mark_message_sent(msg["id"])
+        await asyncio.sleep(SEND_PAUSE)
+    return sent
+
+
+async def outbox_loop(db_path: str, send: SendFn, interval: float = 20) -> None:
+    """Сайт и бот — разные процессы с общей базой: раз в 20 секунд забираем очередь сообщений."""
+    while True:
+        storage = Storage(db_path)
+        try:
+            await send_outbox(storage, send)
+        except Exception:  # noqa: BLE001
+            log.exception("Сбой отправки очереди сообщений")
+        finally:
+            storage.close()
+        await asyncio.sleep(interval)

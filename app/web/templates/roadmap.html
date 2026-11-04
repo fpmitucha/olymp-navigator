@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "_macros.html" import plural, days_left %}
+{% block title %}Роадмап · Бвишечка{% endblock %}
+{% block head %}{% if shared %}<meta name="robots" content="noindex">{% endif %}{% endblock %}
+{% block main %}
+<div class="wrap rm">
+  {% if not shared %}
+  <nav class="rm-tabs" aria-label="Разделы кабинета">
+    <a href="/me">Мой путь</a>
+    <a href="/me/roadmap" aria-current="page">Сопровождение</a>
+  </nav>
+  {% endif %}
+
+  <section class="rm-hero">
+    <div>
+      <p class="kicker">Сопровождение · сезон {{ current_year }}</p>
+      <h1>{% if client.name %}{{ client.name }}, твой путь в вуз{% else %}Твой путь в вуз{% endif %}</h1>
+      <p class="muted">{% if client.grade %}{{ client.grade }} класс · {% endif %}куратор отмечает каждый шаг, здесь видно, что сделано и что дальше</p>
+    </div>
+    {% if not shared %}
+    <div class="rm-hero-side">
+      <span class="id-chip"><span class="muted">Твой ID</span> {{ client.code[:3] }} {{ client.code[3:] }}</span>
+      <details class="share">
+        <summary class="btn ghost small">Ссылка для родителей</summary>
+        <div class="share-box">
+          <p class="small">Покажет роадмап без входа и без доступа к кабинету.</p>
+          <input class="field" readonly value="{{ site_url or request.base_url|string|trim('/') }}/r/{{ client.share_token }}" aria-label="Ссылка для родителей" onclick="this.select()">
+        </div>
+      </details>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="rm-stats" aria-label="Прогресс">
+    <div class="done"><p>Сделано</p><b>{{ plural(rm.done, 'шаг', 'шага', 'шагов') }}</b></div>
+    <div class="now"><p>В работе</p><b>{{ plural(rm.now, 'шаг', 'шага', 'шагов') }}</b></div>
+    <div class="ahead"><p>Впереди</p><b>{{ plural(rm.ahead, 'шаг', 'шага', 'шагов') }}</b></div>
+  </section>
+
+  {% if rm.goals %}
+  <section class="rm-block">
+    <h2>Цель — эти вузы</h2>
+    <div class="rm-goals">
+      {% for g in rm.goals %}
+      <div class="rm-goal">
+        <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="#c0952d" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z"/></svg>{{ g.university }}</h3>
+        <p>{{ g.program or 'любая программа' }}</p>
+        {% if g.bvi or g.other %}<p class="ok">{% if g.bvi %}БВИ дают {{ plural(g.bvi, 'олимпиада', 'олимпиады', 'олимпиад') }} плана{% endif %}{% if g.bvi and g.other %}, {% endif %}{% if g.other %}{{ g.other }} — 100 баллов{% endif %}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="rm-cols">
+    <section class="rm-block rm-main">
+      <div class="rm-head">
+        <h2>Роадмап по олимпиадам</h2>
+        <div class="rm-legend"><span><i class="dot d"></i>сделано</span><span><i class="dot n"></i>в работе</span><span><i class="dot x"></i>впереди</span></div>
+      </div>
+      {% for it in rm.items %}
+      <article class="rm-item">
+        <div class="rm-item-head">
+          <div><h3>{{ short(it.olympiad) }}</h3>{% if it.profile %}<p class="muted small">{{ it.profile }}</p>{% endif %}</div>
+          <span class="rm-status {{ it.tone }}">{{ it.label }}</span>
+        </div>
+        <ol class="rm-steps">
+          {% for st in it.steps %}
+          <li class="st-{{ st.state }}">
+            <span class="node" aria-hidden="true">{% if st.state == 'd' %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>{% elif st.state == 'f' %}×{% endif %}</span>
+            <b>{{ st.name }}</b>
+            <span class="st-note">{% if loop.first and it.deadline and it.status in ['todo', 'registration'] %}до {{ it.deadline.strftime('%d.%m') }}{% elif st.state == 'd' %}готово{% elif st.state == 'n' %}сейчас{% elif st.state == 'f' %}не пройден{% endif %}</span>
+          </li>
+          {% endfor %}
+        </ol>
+        {% if it.benefits %}
+        <div class="pills">
+          {% for uni, b, who in it.benefits %}<span class="pill {{ b }}">{{ uni }} · {{ benefit_short[b] }}{% if who == 'winner' %} победителю{% endif %}</span>{% endfor %}
+        </div>
+        {% endif %}
+      </article>
+      {% else %}
+      <p class="muted">Куратор скоро добавит олимпиады — они появятся здесь.</p>
+      {% endfor %}
+    </section>
+
+    <aside class="rm-side">
+      <section class="rm-next">
+        <h2>Ближайшее</h2>
+        {% for d, what, name in upcoming %}
+        <div class="rm-date">
+          <div class="cal"><b>{{ d.day }}</b><span>{{ ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'][d.month - 1] }}</span></div>
+          <div><p class="what">{{ name }}</p><p class="small">{{ what }} · {{ days_left(d, today) }}</p></div>
+        </div>
+        {% else %}
+        <p class="small">Дат пока нет — напомним в Telegram, когда появятся.</p>
+        {% endfor %}
+      </section>
+      {% if not shared %}
+      <section class="rm-ask">
+        <h2>Есть вопрос?</h2>
+        <p>Куратор отвечает в Telegram. Уведомления о каждом шаге приходят в бот.</p>
+        <a class="btn ghost" href="{{ bot_url }}">Открыть бот</a>
+      </section>
+      {% endif %}
+    </aside>
+  </div>
+</div>
+{% endblock %}

@@ -38,7 +38,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot import texts
 from app.bot.notifier import (
     TemporaryError, UserBlocked, benefits_updates_loop, benefits_watch_loop, forward_help_requests, help_requests_loop,
-    moscow_now, reminder_loop, stages_sync_loop,
+    moscow_now, outbox_loop, reminder_loop, stages_sync_loop,
 )
 from app.bot.storage import Storage
 from app.benefits import DIPLOMA_CHOICES, BenefitsCatalog, fitting, olympiad_profiles, profile_level
@@ -769,6 +769,7 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
             make_sender(bot), admin_id=settings.bot_admin_id)))
         tasks.append(asyncio.create_task(help_requests_loop(storage.path, catalog, make_sender(bot),
                                                             settings.bot_admin_id)))
+        tasks.append(asyncio.create_task(outbox_loop(storage.path, make_sender(bot))))
     try:
         await dp.start_polling(bot)
     finally:
