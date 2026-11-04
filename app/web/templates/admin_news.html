@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Новости · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin">← Клиенты</a>
+  <div class="adm-head">
+    <div><h1>Новости</h1><p class="muted">Черновики собираются сами из этапов олимпиад (раз в час). Проверь и опубликуй — новость появится на сайте и в канале.</p></div>
+    <a class="btn" href="/admin/news/new">+ Написать статью</a>
+  </div>
+  <div class="adm-groups">
+    <a class="chip {{ 'on' if status == 'draft' }}" href="/admin/news?status=draft">Черновики · {{ counts.draft }}</a>
+    <a class="chip {{ 'on' if status == 'published' }}" href="/admin/news?status=published">Опубликовано · {{ counts.published }}</a>
+    <a class="chip {{ 'on' if status == 'rejected' }}" href="/admin/news?status=rejected">Отклонено · {{ counts.rejected }}</a>
+  </div>
+  <form method="post" action="/admin/news/bulk" id="bulk">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="back" value="{{ status }}">
+    {% if items %}
+    <div class="adm-inline">
+      <label class="small check"><input type="checkbox" onclick="for (const c of document.querySelectorAll('input[name=ids]')) c.checked = this.checked"> выбрать все</label>
+      {% if status != 'published' %}<button class="btn small" name="action" value="publish">Опубликовать выбранные</button>{% endif %}
+      {% if status == 'draft' %}<button class="btn small ghost" name="action" value="reject">Отклонить</button>{% endif %}
+      {% if status != 'draft' %}<button class="btn small ghost" name="action" value="draft">В черновики</button>{% endif %}
+      <button class="linkbtn small" name="action" value="delete" onclick="return confirm('Удалить выбранные насовсем?')">Удалить</button>
+    </div>
+    {% endif %}
+    <div class="adm-news">
+      {% for n in items %}
+      <label class="adm-news-item">
+        <input type="checkbox" name="ids" value="{{ n.id }}">
+        <span>
+          <span class="muted small">{{ n.created_at[:16]|replace('T', ' ') }} UTC · {{ kinds.get(n.kind, n.kind) }}{% if n.posted_at %} · в канале{% endif %}</span>
+          <b>{{ n.title }}</b>
+          <span class="small">{{ n.body[:260] }}{% if n.body|length > 260 %}…{% endif %}</span>
+          <span class="small"><a href="/admin/news/{{ n.id }}/edit">Редактировать</a>{% if status == 'published' %} · <a href="/news/{{ n.id }}-{{ n.slug }}" target="_blank" rel="noopener">на сайте</a>{% endif %}</span>
+        </span>
+      </label>
+      {% else %}
+      <p class="muted">Пусто.</p>
+      {% endfor %}
+    </div>
+  </form>
+</div>
+{% endblock %}

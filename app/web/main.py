@@ -179,18 +179,21 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     def render(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
         user = current_user(request)
         name = ""
-        pending_access = 0
+        pending_access = pending_news = pending_unis = 0
         if user:
             with db() as s:
                 name = s.profile(user)["name"]
                 if admin_id and user == admin_id:
                     pending_access = len(s.crm_accesses(status="pending"))
+                    pending_news = s.news_count("draft")
+                    pending_unis = len(s.uni_requests("new"))
         base = dict(
             request=request, bot_url=BOT_URL, admission_year=admission_year, current_year=catalog.current_year,
             benefit_types=BENEFIT_TYPES, diplomas=DIPLOMAS, uni_slug=uni_slug, levels_label=levels_label,
             olympiad_count=olympiad_count, university_count=len(universities), user=user, user_name=name,
             csrf=csrf_token(request) if user else "", short=short, diploma_years=diploma_years,
             is_admin=bool(admin_id) and user == admin_id, pending_access=pending_access,
+            pending_news=pending_news, pending_unis=pending_unis,
         )
         return templates.TemplateResponse(request, template, {**base, **context}, status_code=status_code)
 
@@ -218,8 +221,10 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                                         "СПбГУ", "НТО") for h in catalog.search(q, limit=1)]
         uni_counts = [(u, len({r.olympiad.id for r in u.rules}), sum(r.benefit == "bvi" for r in u.rules))
                       for u in universities]
+        with db() as s:
+            latest_news = s.news_list("published", limit=3)
         return render(request, "index.html", popular=list({o.id: o for o in popular}.values()),
-                      routes=routes, uni_counts=uni_counts)
+                      routes=routes, uni_counts=uni_counts, latest_news=[news_view(i) for i in latest_news])
 
     @app.get("/olympiads", response_class=HTMLResponse)
     def olympiads(request: Request, q: str = "", level: int = Query(0, ge=0, le=3)):
@@ -328,7 +333,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         if user:
             with db() as s:
                 following = set(s.university_subscriptions(user))
-        return render(request, "universities.html", rows=rows, following=following)
+        return render(request, "universities.html", rows=rows, following=following,
+                      suggested=request.query_params.get("suggested") == "1")
 
     @app.get("/university/{university_slug}", response_class=HTMLResponse)
     def university(request: Request, university_slug: str):
@@ -966,6 +972,147 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             s.crm_log(a["telegram_id"], f"Доступ к кабинету {name}: {'работает' if result == 'ok' else 'не подошёл'}")
             notify(s, a["telegram_id"], crm.access_message(name, result == "ok", site_url))
         return RedirectResponse("/admin/access", status_code=303)
+
+    # -- новости ---------------------------------------------------------------
+
+    from app import news as news_mod
+
+    def news_view(item: dict) -> dict:
+        o = catalog.get(item["olympiad_id"]) if item.get("olympiad_id") else None
+        return dict(item, olympiad=o, slug=news_mod.slugify(item["title"]),
+                    kind_label=news_mod.KINDS.get(item["kind"], ""), date=(item["published_at"] or item["created_at"])[:10])
+
+    @app.get("/news", response_class=HTMLResponse)
+    def news_page(request: Request, page: int = Query(1, ge=1, le=500), mine: int = 0):
+        """Лента новостей; mine=1 — только по олимпиадам, за которыми следишь."""
+        user = current_user(request)
+        with db() as s:
+            ids = None
+            if mine and user:
+                ids = list(dict.fromkeys(catalog.canonical_id(x) for x in s.subscriptions(user)))
+                ids += [r["olympiad_id"] for r in (s.crm_olympiads(user) if s.crm_client(user) else [])]
+            items = s.news_list("published", limit=21, offset=(page - 1) * 20, olympiad_ids=ids)
+        return render(request, "news.html", items=[news_view(i) for i in items[:20]], page=page,
+                      has_next=len(items) > 20, mine=bool(mine and user))
+
+    @app.get("/news/rss.xml")
+    def news_rss(request: Request):
+        from xml.sax.saxutils import escape as x
+
+        base = site_url or str(request.base_url).rstrip("/")
+        with db() as s:
+            items = s.news_list("published", limit=50)
+        entries = "".join(
+            f"<item><title>{x(i['title'])}</title><link>{base}/news/{i['id']}-{news_mod.slugify(i['title'])}</link>"
+            f"<guid>{base}/news/{i['id']}</guid><pubDate>{x(i['published_at'] or '')}</pubDate>"
+            f"<description>{x(i['body'][:500])}</description></item>" for i in items)
+        xml = (f'<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Бвишечка — новости '
+               f'олимпиад</title><link>{base}/news</link><description>Регистрации, этапы и льготы</description>'
+               f'{entries}</channel></rss>')
+        return Response(xml, media_type="application/rss+xml")
+
+    @app.get("/news/{news_id:int}-{news_slug}", response_class=HTMLResponse)
+    @app.get("/news/{news_id:int}", response_class=HTMLResponse)
+    def news_one(request: Request, news_id: int, news_slug: str = ""):
+        with db() as s:
+            item = s.news_item(news_id)
+        if item is None or (item["status"] != "published" and current_user(request) != admin_id):
+            raise HTTPException(404, "Новость не найдена")
+        view = news_view(item)
+        if news_slug != view["slug"]:
+            return RedirectResponse(f"/news/{news_id}-{view['slug']}", status_code=301)
+        return render(request, "news_item.html", item=view)
+
+    @app.get("/admin/news", response_class=HTMLResponse)
+    def admin_news(request: Request, status: str = "draft"):
+        require_admin(request)
+        status = status if status in ("draft", "published", "rejected") else "draft"
+        with db() as s:
+            items = s.news_list(status, limit=200)
+            counts = {k: s.news_count(k) for k in ("draft", "published", "rejected")}
+        return render(request, "admin_news.html", items=[news_view(i) for i in items], status=status, counts=counts,
+                      kinds=news_mod.KINDS)
+
+    @app.post("/admin/news/bulk")
+    async def admin_news_bulk(request: Request):
+        form = await request.form()
+        admin_post(request, str(form.get("csrf", "")))
+        action = str(form.get("action", ""))
+        target = {"publish": "published", "reject": "rejected", "draft": "draft"}.get(action)
+        ids = [int(v) for v in form.getlist("ids") if str(v).isdigit()]
+        with db() as s:
+            for news_id in ids:
+                if action == "delete":
+                    s.delete_news(news_id)
+                elif target:
+                    s.update_news(news_id, status=target)
+        return RedirectResponse(f"/admin/news?status={form.get('back', 'draft')}", status_code=303)
+
+    @app.get("/admin/news/new", response_class=HTMLResponse)
+    @app.get("/admin/news/{news_id}/edit", response_class=HTMLResponse)
+    def admin_news_edit(request: Request, news_id: int = 0):
+        require_admin(request)
+        item = None
+        if news_id:
+            with db() as s:
+                item = s.news_item(news_id)
+            if item is None:
+                raise HTTPException(404, "Новость не найдена")
+        return render(request, "admin_news_edit.html", item=item)
+
+    @app.post("/admin/news/save")
+    def admin_news_save(request: Request, csrf: str = Form(""), news_id: int = Form(0), title: str = Form(""),
+                        body: str = Form(""), action: str = Form("draft")):
+        admin_post(request, csrf)
+        title, body = " ".join(title.split())[:300], body.strip().replace("\r\n", "\n")[:20000]
+        if not title or not body:
+            raise HTTPException(422, "Нужны заголовок и текст")
+        status = "published" if action == "publish" else "draft"
+        with db() as s:
+            if news_id:
+                s.update_news(news_id, title=title, body=body, status=status)
+            else:
+                news_id = s.add_news(kind="article", title=title, body=body, status=status)
+        return RedirectResponse(f"/admin/news?status={status}", status_code=303)
+
+    # -- «Предложить вуз» ------------------------------------------------------
+
+    @app.post("/universities/suggest")
+    def suggest_university(request: Request, csrf: str = Form(""), university: str = Form(""),
+                           program: str = Form(""), contact: str = Form(""), website: str = Form("")):
+        user = check_csrf(request, csrf) if current_user(request) else None
+        university = " ".join(university.split())[:200]
+        if website or not university:     # ловушка для ботов или пустая форма
+            return RedirectResponse("/universities?suggested=1#suggest", status_code=303)
+        with db() as s:
+            if s.uni_requests_since(60) < 50 and not s.recent_uni_request(user, university):
+                s.add_uni_request(university=university, program=" ".join(program.split())[:300],
+                                  contact=contact.strip()[:200], telegram_id=user)
+                if admin_id:
+                    from html import escape as h
+
+                    s.queue_message(admin_id, f"<b>Предложили вуз</b>\n{h(university)}"
+                                              + (f"\nПрограмма: {h(program.strip()[:300])}" if program.strip() else "")
+                                              + (f"\nКонтакт: {h(contact.strip()[:200])}" if contact.strip() else ""))
+        return RedirectResponse("/universities?suggested=1#suggest", status_code=303)
+
+    @app.get("/admin/requests", response_class=HTMLResponse)
+    def admin_requests(request: Request):
+        require_admin(request)
+        with db() as s:
+            rows = s.uni_requests("new")
+        grouped: dict[str, list[dict]] = {}
+        for r in rows:
+            grouped.setdefault(r["university"].strip().lower(), []).append(r)
+        groups = sorted(grouped.values(), key=lambda g: (-len(g), g[0]["university"]))
+        return render(request, "admin_requests.html", groups=groups)
+
+    @app.post("/admin/requests/done")
+    def admin_requests_done(request: Request, csrf: str = Form(""), university: str = Form("")):
+        admin_post(request, csrf)
+        with db() as s:
+            s.close_uni_requests(university)
+        return RedirectResponse("/admin/requests", status_code=303)
 
     # -- JSON ------------------------------------------------------------------
 

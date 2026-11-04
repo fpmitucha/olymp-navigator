@@ -45,6 +45,10 @@ class Settings:
     site_url: str = os.environ.get("SITE_URL", "").rstrip("/")
     # Ключ шифрования логинов и паролей клиентов (Fernet); server-setup.sh создаёт его сам. Сменишь — старые не прочитать
     crm_key: str = os.environ.get("CRM_KEY", "")
+    # Telegram-канал для новостей (@bvishechka_news или -100…); бот должен быть админом канала. Пусто — без канала
+    news_channel: str = os.environ.get("NEWS_CHANNEL", "")
+    # Публиковать автоматические новости (регистрация, даты) без проверки куратором
+    news_autopublish: bool = os.environ.get("NEWS_AUTOPUBLISH", "0").strip().lower() in ("1", "true", "yes")
     telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")
     # Раз в сутки забирать даты этапов с olimpiada.ru, пока работает бот
     stages_autosync: bool = os.environ.get("STAGES_AUTOSYNC", "1").strip().lower() not in ("0", "false", "no")

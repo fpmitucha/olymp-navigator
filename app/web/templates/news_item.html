@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title }} · Бвишечка{% endblock %}
+{% block description %}{{ item.body[:160] }}{% endblock %}
+{% block head %}
+<meta property="og:title" content="{{ item.title }}">
+<meta property="og:description" content="{{ item.body[:200] }}">
+<meta property="og:type" content="article">
+{% endblock %}
+{% block main %}
+<div class="wrap news-page">
+  <a class="small muted" href="/news">← Все новости</a>
+  <article class="news-article">
+    <p class="news-meta">{{ item.date }}{% if item.kind_label %} · {{ item.kind_label }}{% endif %}{% if item.status != 'published' %} · <b>черновик</b>{% endif %}</p>
+    <h1>{{ item.title }}</h1>
+    {% for para in item.body.split('\n\n') %}<p>{% for line in para.split('\n') %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>{% endfor %}
+    <div class="news-actions">
+      {% if item.olympiad %}<a class="btn" href="/olympiad/{{ item.olympiad.id }}{% if item.profile and ',' not in item.profile %}?profile={{ item.profile|urlencode }}{% endif %}">Олимпиада и льготы в вузах</a>{% endif %}
+      {% if item.source_url %}<a class="btn ghost" href="{{ item.source_url }}" rel="nofollow noopener" target="_blank">Источник</a>{% endif %}
+    </div>
+  </article>
+  <div class="panel closing" style="margin-top:36px">
+    <div><h2>Не пропусти регистрацию</h2><p>Бот напомнит о регистрации и каждом этапе олимпиад, за которыми ты следишь.</p></div>
+    <a class="btn gold" href="{{ bot_url }}">Открыть бота</a>
+  </div>
+</div>
+{% endblock %}

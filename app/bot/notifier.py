@@ -399,10 +399,61 @@ def crm_housekeeping(storage: Storage, catalog: Catalog, today: date, site_url: 
     return queued
 
 
+AUTO_NEWS = ("registration_open", "registration_closing", "stage_dates")
+
+
+def news_housekeeping(storage: Storage, catalog: Catalog, benefits, today: date, autopublish: bool = False) -> int:
+    """Черновики новостей из этапов олимпиад (и подборка по понедельникам). Возвращает число новых."""
+    from app import news
+
+    since = storage.get_meta("news_since")
+    if not since:
+        since = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        storage.set_meta("news_since", since)
+    stages = storage.stages()
+    drafts = news.generate(catalog, benefits, stages, today, since)
+    digest = news.weekly_digest(catalog, benefits, stages, today)
+    if digest:
+        drafts.append(digest)
+    added = 0
+    for d in drafts:
+        status = "published" if autopublish and d.kind in AUTO_NEWS else "draft"
+        if storage.add_news(kind=d.kind, title=d.title, body=d.body, dedupe_key=d.key, olympiad_id=d.olympiad_id,
+                            profile=d.profile, source_url=d.source_url, event_date=d.event_date, status=status):
+            added += 1
+    return added
+
+
+async def post_news(storage: Storage, send: SendFn, channel: str, site_url: str = "") -> int:
+    """Опубликованные новости → Telegram-канал. Старше двух суток не постим (канал подключили позже)."""
+    from app import news
+
+    if not channel:
+        return 0
+    posted = 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
+    for item in storage.news_to_post():
+        if (item["published_at"] or "") < cutoff:
+            storage.mark_news_posted(item["id"])
+            continue
+        try:
+            await send(channel, news.channel_text(item, site_url))  # type: ignore[arg-type]
+        except TemporaryError:
+            break
+        except Exception:  # noqa: BLE001 — например, бот не админ канала: не блокируем очередь
+            log.exception("Не опубликовалась новость #%s в канале %s", item["id"], channel)
+        storage.mark_news_posted(item["id"])
+        posted += 1
+        await asyncio.sleep(SEND_PAUSE)
+    return posted
+
+
 async def outbox_loop(db_path: str, send: SendFn, catalog: Catalog | None = None, site_url: str = "",
+                      benefits=None, news_channel: str = "", news_autopublish: bool = False,
                       interval: float = 20, housekeeping_every: float = 60 * 60) -> None:
-    """Сайт и бот — разные процессы с общей базой: раз в 20 секунд забираем очередь сообщений,
-    раз в час — напоминания сопровождения (в тихие часы не шлём, отложим до утра)."""
+    """Сайт и бот — разные процессы с общей базой: раз в 20 секунд забираем очередь сообщений и
+    новости для канала, раз в час — напоминания сопровождения и черновики новостей
+    (в тихие часы не шлём, отложим до утра)."""
     last = 0.0
     while True:
         storage = Storage(db_path)
@@ -410,8 +461,12 @@ async def outbox_loop(db_path: str, send: SendFn, catalog: Catalog | None = None
             now = asyncio.get_running_loop().time()
             if catalog is not None and now - last >= housekeeping_every and not is_quiet_time(moscow_now()):
                 crm_housekeeping(storage, catalog, moscow_now().date(), site_url)
+                if benefits is not None:
+                    news_housekeeping(storage, catalog, benefits, moscow_now().date(), news_autopublish)
                 last = now
             await send_outbox(storage, send)
+            if not is_quiet_time(moscow_now()):
+                await post_news(storage, send, news_channel, site_url)
         except Exception:  # noqa: BLE001
             log.exception("Сбой отправки очереди сообщений")
         finally:

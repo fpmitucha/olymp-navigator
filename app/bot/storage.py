@@ -174,6 +174,31 @@ CREATE TABLE IF NOT EXISTS crm_reminder (          -- отправленные �
     sent_at       TEXT NOT NULL,
     PRIMARY KEY (crm_olympiad, kind)
 );
+CREATE TABLE IF NOT EXISTS news (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind          TEXT NOT NULL,                 -- registration_open | registration_closing | stage_dates | digest | article
+    dedupe_key    TEXT UNIQUE,                   -- автоматические новости не повторяются
+    title         TEXT NOT NULL,
+    body          TEXT NOT NULL,
+    olympiad_id   TEXT,
+    profile       TEXT NOT NULL DEFAULT '',
+    source_url    TEXT,
+    event_date    TEXT,
+    status        TEXT NOT NULL DEFAULT 'draft', -- draft | published | rejected
+    created_at    TEXT NOT NULL,
+    published_at  TEXT,
+    posted_at     TEXT                           -- когда ушла в Telegram-канал
+);
+CREATE INDEX IF NOT EXISTS news_status_idx ON news (status, published_at);
+CREATE TABLE IF NOT EXISTS uni_request (             -- «Предложить вуз»: каких вузов не хватает
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id  INTEGER,
+    university   TEXT NOT NULL,
+    program      TEXT NOT NULL DEFAULT '',
+    contact      TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'new',    -- new | done
+    created_at   TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS outbox (               -- сообщения с сайта, которые бот отправит в Telegram
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_id  INTEGER NOT NULL,
@@ -495,7 +520,7 @@ class Storage:
     def delete_user_data(self, telegram_id: int) -> None:
         """«Удалить мои данные» в кабинете: профиль, дипломы, подписки, сессии, заявки."""
         for table in ("user_diploma", "user_profile", "web_session", "subscription", "university_subscription",
-                      "help_request", "crm_client", "user_code", "outbox"):
+                      "help_request", "crm_client", "user_code", "outbox", "uni_request"):
             self.conn.execute(f"DELETE FROM {table} WHERE telegram_id = ?", (telegram_id,))  # noqa: S608
         self.conn.commit()
 
@@ -788,3 +813,91 @@ class Storage:
                                 (row_id, kind, _now()))
         self.conn.commit()
         return cur.rowcount == 0
+
+    # -- новости ----------------------------------------------------------------
+
+    def add_news(self, *, kind: str, title: str, body: str, dedupe_key: str | None = None,
+                 olympiad_id: str | None = None, profile: str = "", source_url: str | None = None,
+                 event_date: date | None = None, status: str = "draft") -> int | None:
+        """Новая новость; None — такая (по dedupe_key) уже была."""
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO news (kind, dedupe_key, title, body, olympiad_id, profile, source_url, event_date, "
+            "status, created_at, published_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (kind, dedupe_key, title[:300], body[:20000], olympiad_id, profile, source_url,
+             event_date.isoformat() if event_date else None, status, _now(), _now() if status == "published" else None))
+        self.conn.commit()
+        return cur.lastrowid if cur.rowcount == 1 else None
+
+    def news_item(self, news_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM news WHERE id = ?", (news_id,)).fetchone()
+        return dict(row) if row else None
+
+    def news_list(self, status: str = "published", limit: int = 30, offset: int = 0,
+                  olympiad_ids: list[str] | None = None) -> list[dict]:
+        sql = "SELECT * FROM news WHERE status = ?"
+        params: list = [status]
+        if olympiad_ids is not None:
+            if not olympiad_ids:
+                return []
+            sql += f" AND olympiad_id IN ({','.join('?' * len(olympiad_ids))})"
+            params += olympiad_ids
+        order = "published_at DESC, id DESC" if status == "published" else "created_at DESC, id DESC"
+        rows = self.conn.execute(f"{sql} ORDER BY {order} LIMIT ? OFFSET ?", (*params, limit, offset))  # noqa: S608
+        return [dict(r) for r in rows]
+
+    def news_count(self, status: str) -> int:
+        return self.conn.execute("SELECT count(*) FROM news WHERE status = ?", (status,)).fetchone()[0]
+
+    def update_news(self, news_id: int, *, title: str | None = None, body: str | None = None,
+                    status: str | None = None) -> None:
+        item = self.news_item(news_id)
+        if item is None:
+            return
+        published_at = item["published_at"]
+        if status == "published" and not published_at:
+            published_at = _now()
+        self.conn.execute("UPDATE news SET title = ?, body = ?, status = ?, published_at = ? WHERE id = ?",
+                          (title if title is not None else item["title"], body if body is not None else item["body"],
+                           status or item["status"], published_at, news_id))
+        self.conn.commit()
+
+    def delete_news(self, news_id: int) -> None:
+        self.conn.execute("DELETE FROM news WHERE id = ?", (news_id,))
+        self.conn.commit()
+
+    def news_to_post(self, limit: int = 10) -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM news WHERE status = 'published' AND posted_at IS NULL "
+                                 "ORDER BY published_at LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_news_posted(self, news_id: int) -> None:
+        self.conn.execute("UPDATE news SET posted_at = ? WHERE id = ?", (_now(), news_id))
+        self.conn.commit()
+
+    # -- «Предложить вуз» -----------------------------------------------------
+
+    def add_uni_request(self, *, university: str, program: str = "", contact: str = "",
+                        telegram_id: int | None = None) -> int:
+        cur = self.conn.execute("INSERT INTO uni_request (telegram_id, university, program, contact, created_at) "
+                                "VALUES (?, ?, ?, ?, ?)", (telegram_id, university[:200], program[:300],
+                                                           contact[:200], _now()))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def recent_uni_request(self, telegram_id: int | None, university: str, hours: int = 24) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM uni_request WHERE lower(university) = lower(?) AND created_at >= ? "
+            "AND coalesce(telegram_id, 0) = coalesce(?, 0)", (university, _ago(minutes=hours * 60), telegram_id))
+        return row.fetchone() is not None
+
+    def uni_requests_since(self, minutes: int) -> int:
+        return self.conn.execute("SELECT count(*) FROM uni_request WHERE created_at >= ?",
+                                 (_ago(minutes=minutes),)).fetchone()[0]
+
+    def uni_requests(self, status: str = "new") -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM uni_request WHERE status = ? ORDER BY created_at DESC", (status,))
+        return [dict(r) for r in rows]
+
+    def close_uni_requests(self, university: str) -> None:
+        self.conn.execute("UPDATE uni_request SET status = 'done' WHERE lower(university) = lower(?)", (university,))
+        self.conn.commit()

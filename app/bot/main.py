@@ -769,7 +769,9 @@ async def run(token: str, catalog: Catalog, storage: Storage, proxy: str = "", f
             make_sender(bot), admin_id=settings.bot_admin_id)))
         tasks.append(asyncio.create_task(help_requests_loop(storage.path, catalog, make_sender(bot),
                                                             settings.bot_admin_id)))
-        tasks.append(asyncio.create_task(outbox_loop(storage.path, make_sender(bot), catalog, settings.site_url)))
+        tasks.append(asyncio.create_task(outbox_loop(
+            storage.path, make_sender(bot), catalog, settings.site_url, benefits=benefits,
+            news_channel=settings.news_channel, news_autopublish=settings.news_autopublish)))
     try:
         await dp.start_polling(bot)
     finally:

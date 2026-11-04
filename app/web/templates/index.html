@@ -77,5 +77,18 @@
   </div>
 </section>
 
+{% if latest_news %}
+<section class="block">
+  <div class="wrap">
+    <div class="block-head"><h2>Новости олимпиад</h2><a href="/news">Все новости →</a></div>
+    <ul class="news-list">
+      {% for n in latest_news %}
+      <li><span class="news-meta">{{ n.date }}{% if n.kind_label %} · {{ n.kind_label }}{% endif %}</span>
+        <a class="title" href="/news/{{ n.id }}-{{ n.slug }}">{{ n.title }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endif %}
 <div class="wrap">{{ closing() }}</div>
 {% endblock %}

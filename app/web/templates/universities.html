@@ -5,7 +5,7 @@
 <div class="wrap">
   <div class="page-head">
     <h1>Вузы</h1>
-    <p class="muted">Особые права для победителей и призёров олимпиад. До публикации документов на приём {{ admission_year }} — данные прошлого года.</p>
+    <p class="muted">Особые права для победителей и призёров олимпиад. До публикации документов на приём {{ admission_year }} — данные прошлого года. Нет нужного вуза? <a href="#suggest">Предложи</a>.</p>
   </div>
   <ul class="list">
     {% for u, counts, olympiads in rows %}
@@ -17,6 +17,19 @@
     </li>
     {% endfor %}
   </ul>
+  <section class="suggest" id="suggest">
+    <h2>Нет нужного вуза?</h2>
+    {% if suggested %}<p class="ok">Спасибо! Учтём — вузы, которые просят чаще, добавляем первыми.</p>{% endif %}
+    <p class="muted">Напиши, какой вуз и программу добавить, — соберём льготы для олимпиадников из его документов.</p>
+    <form method="post" action="/universities/suggest" class="suggest-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <label>Вуз<input class="field" name="university" maxlength="200" required placeholder="например, МИСИС"></label>
+      <label>Программа <span class="muted">(если важно)</span><input class="field" name="program" maxlength="300" placeholder="09.03.04 Программная инженерия"></label>
+      {% if not user %}<label>Контакт <span class="muted">(необязательно — сообщим, когда добавим)</span><input class="field" name="contact" maxlength="200" placeholder="@telegram или почта"></label>{% endif %}
+      <button class="btn" type="submit">Предложить вуз</button>
+    </form>
+  </section>
   <div style="height:64px"></div>
 </div>
 {% endblock %}
