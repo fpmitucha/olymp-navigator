@@ -14,6 +14,8 @@
   {"university": "РЭУ", "hash": ["https://www.rea.ru/mnt/sveden/document/priemDocLink/03_bak_Pravila_priema_pril_11.pdf"]},
   {"university": "Финуниверситет", "page": "https://www.fa.ru/for-applicants/olympiads/uchet/"},
   {"university": "ВШЭ", "page": "https://ba.hse.ru/"},
+  {"university": "МГСУ", "page": "https://mgsu.ru/postupayushchim/Bakalavriat-spetsialitet/osobye-prava-i-preimushchestva-pobeditelyam-i-prizeram-olimpiad/",
+   "probe": ["https://mgsu.ru/postupayushchim/Bakalavriat-spetsialitet/osobye-prava-i-preimushchestva-pobeditelyam-i-prizeram-olimpiad/RSOSH_{year}.pdf"]},
   {"university": "МГИМО", "page": "https://mgimo.ru/abiturient/"}
  ]
 }
