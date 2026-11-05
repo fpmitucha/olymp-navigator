@@ -924,22 +924,57 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
 
     @app.post("/admin/client/{code}/olympiads")
     def admin_add_olympiad(request: Request, code: str, csrf: str = Form(""), olympiad_id: str = Form(""),
-                           profile: str = Form(""), to_group: str = Form("")):
+                           profile: list[str] = Form([]), to_group: str = Form("")):
+        """Одна олимпиада, сразу несколько профилей (галочки); клиенту — одно сообщение."""
         admin_post(request, csrf)
         o = get_olympiad(catalog.canonical_id(olympiad_id))
-        if profile and profile not in o.profiles:
+        profiles = list(dict.fromkeys(p for p in profile if p)) or [""]
+        if any(p and p not in o.profiles for p in profiles):
             raise HTTPException(422, "У олимпиады нет такого профиля")
         with db() as s:
             user = client_by_code(s, code)
             client = s.crm_client(user)
             members = s.crm_group_members(client["group_id"]) if to_group and client["group_id"] else [user]
-            name = short(o) + (f", {profile}" if profile else "")
             for member in members:
-                if s.crm_add_olympiad(member, o.id, profile):
+                added = []
+                for p in profiles:
+                    if s.crm_add_olympiad(member, o.id, p):
+                        name = short(o) + (f", {p}" if p else "")
+                        s.crm_log(member, f"Добавлена олимпиада: {name}")
+                        added.append(name)
+                if added:
                     s.subscribe(member, o.id)   # обычные напоминания бота о регистрации и этапах
-                    s.crm_log(member, f"Добавлена олимпиада: {name}")
-                    notify(s, member, f"<b>В план добавлена олимпиада</b>\n{crm.escape(name)}. "
-                                      "Напомним о регистрации и этапах.")
+                    notify(s, member, crm.plan_added_message(added, site_url))
+        return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
+
+    @app.post("/admin/client/{code}/olympiads/statuses")
+    async def admin_bulk_status(request: Request, code: str):
+        """Массовая смена статуса: отмеченные олимпиады → один статус, клиенту — одно сообщение."""
+        form = await request.form()
+        admin_post(request, str(form.get("csrf", "")))
+        status = str(form.get("status", ""))
+        if not crm.valid_status(status) and status != "passed":
+            raise HTTPException(422, "Нет такого статуса")
+        ids = {int(x) for x in form.getlist("row") if str(x).isdigit()}
+        with db() as s:
+            user = client_by_code(s, code)
+            changed = []
+            for it in roadmap_for(s, user).items:
+                if it.row_id not in ids:
+                    continue
+                m = crm._QF.fullmatch(status)
+                if m and int(m.group(2)) > it.n:                  # у олимпиады нет такого по счёту отбора
+                    continue
+                new = crm.normalize_status(status, it.n)          # «Отбор пройден» → последний отбор этой олимпиады
+                if new == it.status_key:
+                    continue
+                s.crm_set_status(user, it.row_id, new)
+                label = crm.status_label(new, it.n)
+                name = short(it.olympiad) + (f", {it.profile}" if it.profile else "")
+                s.crm_log(user, f"{name}: {label}")
+                changed.append((name, label))
+            if changed:
+                notify(s, user, crm.bulk_status_message(changed, site_url))
         return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
 
     @app.post("/admin/client/{code}/olympiads/bulk")

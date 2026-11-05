@@ -41,12 +41,36 @@
 
       <section class="adm-card" id="olympiads">
         <div class="rm-head"><h2>Олимпиады</h2>{% if client.notify %}<span class="muted small">смена статуса уходит клиенту в Telegram</span>{% else %}<span class="muted small">уведомления клиенту выключены</span>{% endif %}</div>
+        {% if rm.items %}
+        <form method="post" action="{{ base }}/olympiads/statuses" id="bulk-status" class="bs-bar">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="small check"><input type="checkbox" class="bs-all"> все</label>
+          <select class="field" name="status" aria-label="Новый статус для отмеченных" required>
+            <option value="">Статус для отмеченных…</option>
+            <option value="todo">Не начато</option>
+            <option value="registration">Нужна регистрация</option>
+            <option value="registered">Регистрация пройдена</option>
+            <option value="q1">Идёт отбор (1-й)</option>
+            <option value="q1ok">1-й отбор пройден</option>
+            <option value="q2">Идёт 2-й отбор</option>
+            <option value="passed">Отбор пройден (весь)</option>
+            <option value="f1">Отбор не пройден</option>
+            <option value="final">Идёт финал</option>
+            <option value="winner">Победитель</option>
+            <option value="prize">Призёр</option>
+            <option value="participant">Участник финала</option>
+          </select>
+          <button class="btn small" type="submit" disabled>Применить</button>
+          <span class="muted small">клиенту уйдёт одно сообщение</span>
+        </form>
+        {% endif %}
         <div class="adm-table flat">
           <table>
-            <thead><tr><th>Олимпиада</th><th>Льготы в целях</th><th>Статус</th><th>Регистрация до</th><th>Доступ</th></tr></thead>
+            <thead><tr><th class="bs-col"></th><th>Олимпиада</th><th>Льготы в целях</th><th>Статус</th><th>Регистрация до</th><th>Доступ</th></tr></thead>
             <tbody>
             {% for it in rm.items %}
               <tr>
+                <td class="bs-col"><input type="checkbox" name="row" value="{{ it.row_id }}" form="bulk-status" aria-label="Отметить: {{ short(it.olympiad) }}{% if it.profile %}, {{ it.profile }}{% endif %}"></td>
                 <td><a class="strong" href="/olympiad/{{ it.olympiad.id }}">{{ short(it.olympiad) }}</a>{% if it.profile %}<div class="muted small">{{ it.profile }}</div>{% endif %}
                   <form method="post" action="{{ base }}/olympiads/{{ it.row_id }}/delete" onsubmit="return confirm('Убрать олимпиаду из плана?')">
                     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -74,7 +98,7 @@
                 <td class="small">{% if it.access == 'pending' %}<a class="tag gold" href="/admin/access">на проверке</a>{% elif it.access == 'ok' %}<span class="ok">проверен</span>{% elif it.access == 'bad' %}<span class="warn">не подошёл</span>{% elif it.needs_access %}<span class="muted">ждём{% if it.access_deadline %} до {{ it.access_deadline.strftime('%d.%m') }}{% endif %}</span>{% else %}—{% endif %}</td>
               </tr>
             {% else %}
-              <tr><td colspan="5" class="muted">Олимпиад пока нет — найди ниже.</td></tr>
+              <tr><td colspan="6" class="muted">Олимпиад пока нет — найди ниже.</td></tr>
             {% endfor %}
             </tbody>
           </table>
@@ -89,7 +113,12 @@
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <input type="hidden" name="olympiad_id" value="{{ o.id }}">
           <b>{{ short(o) }}</b>
-          <select class="field" name="profile" aria-label="Профиль">{% for p in profiles %}<option>{{ p }}</option>{% else %}<option value="">—</option>{% endfor %}</select>
+          {% if profiles %}
+          <fieldset class="hit-profiles">
+            <legend class="small muted">Профили — можно несколько{% if profiles|length > 3 %} · <button type="button" class="linkbtn small hp-all">все</button>{% endif %}</legend>
+            {% for p in profiles %}<label class="chip-check"><input type="checkbox" name="profile" value="{{ p }}" {% if profiles|length == 1 %}checked{% endif %}> {{ p }}</label>{% endfor %}
+          </fieldset>
+          {% else %}<input type="hidden" name="profile" value="">{% endif %}
           {% if client.group_id %}<label class="small"><input type="checkbox" name="to_group" value="1"> всей группе «{{ client.group_name }}»</label>{% endif %}
           <button class="btn small" type="submit">Добавить</button>
         </form>
@@ -231,4 +260,29 @@
     </aside>
   </div>
 </div>
+<script>
+(() => {
+  const f = document.getElementById('bulk-status');
+  if (f) {
+    const boxes = () => document.querySelectorAll('input[name=row][form=bulk-status]');
+    const btn = f.querySelector('button[type=submit]'), sel = f.querySelector('select');
+    const upd = () => {
+      const n = [...boxes()].filter((b) => b.checked).length;
+      btn.disabled = !n || !sel.value;
+      btn.textContent = n ? `Применить к ${n}` : 'Применить';
+    };
+    f.querySelector('.bs-all').addEventListener('change', (e) => { boxes().forEach((b) => { b.checked = e.target.checked; }); upd(); });
+    document.addEventListener('change', (e) => { if (e.target.name === 'row' || e.target === sel) upd(); });
+  }
+  document.querySelectorAll('.hp-all').forEach((b) => b.addEventListener('click', () => {
+    const boxes = b.closest('fieldset').querySelectorAll('input[type=checkbox]');
+    const on = ![...boxes].every((x) => x.checked);
+    boxes.forEach((x) => { x.checked = on; });
+  }));
+  document.querySelectorAll('.adm-hit').forEach((form) => form.addEventListener('submit', (e) => {
+    const boxes = form.querySelectorAll('input[name=profile][type=checkbox]');
+    if (boxes.length && ![...boxes].some((x) => x.checked)) { e.preventDefault(); form.querySelector('.hit-profiles legend').classList.add('form-error'); }
+  }));
+})();
+</script>
 {% endblock %}

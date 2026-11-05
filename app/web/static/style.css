@@ -638,3 +638,14 @@ details.more[open] summary { display: none; }
   font-size: 14px; font-weight: 600; cursor: pointer; min-height: 32px; text-align: left; }
 .pp-chip:hover { background: #efdfb8; }
 .pp-list li.sel { font-weight: 700; }
+
+/* массовые статусы и профили олимпиады */
+.bs-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 12px; }
+.bs-bar select { flex: 0 1 280px; }
+.bs-col { width: 32px; }
+.bs-col input, .chip-check input { width: 18px; height: 18px; }
+.hit-profiles { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; }
+.hit-profiles legend { padding: 0; margin-bottom: 6px; }
+.chip-check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #e6e6ea;
+  border-radius: 999px; font-size: 14px; cursor: pointer; }
+.chip-check:has(input:checked) { background: #f7efdc; border-color: #c0952d; }

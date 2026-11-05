@@ -130,6 +130,22 @@ class RoadmapTest(unittest.TestCase):
         rm = build_roadmap(self.catalog, self.benefits, [], rows, self.s.stages, date(2026, 11, 4))
         self.assertEqual(rm.items[0].n, 2)                 # старый снимок без id тоже обновился
 
+    def test_registration_opening_notifies_once_and_moves_status(self):
+        from app.bot.notifier import crm_housekeeping
+
+        self.s.touch_user(5)
+        self.s.crm_enable(5)
+        self.s.crm_add_olympiad(5, self.fiztech.id, "математика")
+        self.s.upsert_stages([self.stage("registration", "Регистрация", date(2026, 11, 10), date(2026, 11, 30), n=1)])
+        self.assertEqual(crm_housekeeping(self.s, self.catalog, date(2026, 11, 9)), 0)      # ещё не открылась
+        crm_housekeeping(self.s, self.catalog, date(2026, 11, 10))
+        crm_housekeeping(self.s, self.catalog, date(2026, 11, 11))                           # без повторов
+        texts = [m["text"] for m in self.s.pending_messages()]
+        self.assertEqual(sum("Открылась регистрация" in x for x in texts), 1)
+        self.assertIn("до 30.11", next(x for x in texts if "Открылась" in x))
+        self.assertEqual(self.s.crm_olympiads(5)[0]["status"], "registration")
+        self.assertEqual(crm_housekeeping(self.s, self.catalog, date(2026, 12, 5)), 0)       # закрылась — молчим
+
     def test_auto_pick(self):
         from app.crm import auto_pick
 
@@ -347,6 +363,30 @@ class GoalsFromListTest(CrmWebTest):
             self.assertEqual(len(msgs), before + 1)                        # одно сообщение на всю пачку
             self.assertIn("В план добавлено олимпиад: 2", msgs[-1]["text"])
         self.assertNotIn(f'value="{picks[0]}"', admin.get(base).text)    # добавленное из подбора ушло
+
+    def test_multi_profile_add_and_bulk_status(self):
+        client, _ = self.login(self.CLIENT)
+        code = "".join(re.search(r"Твой ID</span> (\d{3}) (\d{3})", client.get("/me").text).groups())
+        admin, csrf = self.login(self.ADMIN)
+        admin.post("/admin/open", data={"csrf": csrf, "code": code})
+        base = f"/admin/client/{code}"
+        profiles = sorted(self.fiztech.profiles)[:2]
+        with self.app.state.db() as s:
+            before = len(s.pending_messages())
+        admin.post(f"{base}/olympiads", data={"csrf": csrf, "olympiad_id": self.fiztech.id, "profile": profiles})
+        with self.app.state.db() as s:
+            rows = s.crm_olympiads(self.CLIENT)
+            self.assertEqual(sorted(r["profile"] for r in rows), profiles)
+            self.assertEqual(len(s.pending_messages()), before + 1)            # одно сообщение на оба профиля
+        self.assertIn('form="bulk-status"', admin.get(base).text)
+        r = admin.post(f"{base}/olympiads/statuses", data={"csrf": csrf, "status": "registered",
+                                                           "row": [str(x["id"]) for x in rows]})
+        self.assertEqual(r.status_code, 200)
+        with self.app.state.db() as s:
+            self.assertEqual({x["status"] for x in s.crm_olympiads(self.CLIENT)}, {"registered"})
+            self.assertIn("Обновления по олимпиадам: 2", s.pending_messages()[-1]["text"])
+        self.assertEqual(admin.post(f"{base}/olympiads/statuses", data={"csrf": csrf, "status": "nope"}).status_code,
+                         422)
 
     def test_add_university_from_list_and_cabinet(self):
         client, csrf = self.login(self.CLIENT)

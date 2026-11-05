@@ -405,7 +405,18 @@ def crm_housekeeping(storage: Storage, catalog: Catalog, today: date, site_url: 
     from app import crm
 
     queued = 0
-    for row_id, telegram_id, kind, text in crm.access_reminders(catalog, storage.crm_all_olympiads(), storage.stages,
+    rows = storage.crm_all_olympiads()
+    for row_id, telegram_id, kind, text in crm.registration_openings(catalog, rows, storage.stages, today, site_url):
+        if not storage.crm_reminder_sent(row_id, kind):
+            storage.queue_message(telegram_id, text)
+            queued += 1
+            row = next(r for r in rows if r["id"] == row_id)
+            if row["status"] == "todo":            # статус двигаем сами — куратору не нужно отмечать
+                storage.crm_set_status(telegram_id, row_id, "registration")
+                o = catalog.get(row["olympiad_id"])
+                storage.crm_log(telegram_id, f"Открылась регистрация: {o.name if o else row['olympiad_id']}"
+                                + (f", {row['profile']}" if row["profile"] else "") + " — статус «Нужна регистрация»")
+    for row_id, telegram_id, kind, text in crm.access_reminders(catalog, rows, storage.stages,
                                                                 today, site_url):
         if not storage.crm_reminder_sent(row_id, kind):
             storage.queue_message(telegram_id, text)

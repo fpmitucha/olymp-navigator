@@ -393,6 +393,15 @@ def auto_pick(catalog: Catalog, benefits: BenefitsCatalog, goals: list[dict],
     return out
 
 
+def bulk_status_message(changed: list[tuple[str, str]], site_url: str = "") -> str:
+    """Одно сообщение на массовую смену статусов: [(олимпиада, новый статус)]."""
+    if len(changed) == 1:
+        return f"<b>Обновление</b>\n{escape(changed[0][0])} — {escape(changed[0][1].lower())}." + _link(site_url)
+    lines = "\n".join(f"• {escape(n)} — {escape(s.lower())}" for n, s in changed[:20])
+    more = f"\n…и ещё {len(changed) - 20}" if len(changed) > 20 else ""
+    return f"<b>Обновления по олимпиадам: {len(changed)}</b>\n{lines}{more}" + _link(site_url)
+
+
 def plan_added_message(names: list[str], site_url: str = "") -> str:
     """Одно сообщение клиенту на всю пачку одобренных олимпиад."""
     head = "В план добавлена олимпиада" if len(names) == 1 else f"В план добавлено олимпиад: {len(names)}"
@@ -427,6 +436,39 @@ def access_message(o_name: str, ok: bool, site_url: str = "") -> str:
         return f"<b>Доступ проверен</b>\nВход в кабинет «{escape(o_name)}» работает — дальше мы всё сделаем сами."
     return (f"<b>Доступ не подошёл</b>\nНе получилось войти в кабинет «{escape(o_name)}». "
             "Проверь логин и пароль и введи их заново." + _link(site_url))
+
+
+def registration_openings(catalog: Catalog, rows: list[dict], stages_for, today: date, site_url: str = ""):
+    """Открылась регистрация на олимпиаду из плана клиента (по этапам с сайта олимпиады).
+
+    Возвращает [(строка олимпиады, telegram_id, вид, текст)]; вид включает дату начала —
+    если регистрацию откроют заново (новый сезон, второй поток), напишем ещё раз.
+    Если регистрация уже идёт, когда олимпиаду добавили в план, тоже пишем — пока она не закрылась.
+    """
+    out = []
+    for r in rows:
+        if r["status"] not in DEADLINE_STATUSES:
+            continue
+        o = catalog.get(r["olympiad_id"])
+        if o is None:
+            continue
+        plan, _ = merge_plan(r.get("plan") or "[]", stages_for(o.id), r["profile"])
+        for e in plan:
+            if e["kind"] != "registration":
+                continue
+            start, end = _d(e.get("start")), _d(e.get("end"))
+            if start is None or start > today or (end is not None and end < today):
+                continue
+            if end is None and (today - start).days > 14:
+                continue
+            name = o.name if len(o.name) < 60 else o.name[:57] + "…"
+            name += f", {r['profile']}" if r["profile"] else ""
+            until = f" до {end:%d.%m}" if end else ""
+            text = (f"<b>Открылась регистрация</b>\n«{escape(name)}» — регистрация идёт{until}. "
+                    "Куратор подскажет, что сделать." + _link(site_url))
+            out.append((r["id"], r["telegram_id"], f"reg_open:{start.isoformat()}", text))
+            break
+    return out
 
 
 def access_reminders(catalog: Catalog, rows: list[dict], stages_for, today: date, site_url: str = ""):
