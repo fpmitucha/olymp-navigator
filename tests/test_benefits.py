@@ -205,3 +205,12 @@ class ProgramCatalogTest(unittest.TestCase):
         u = parse_file(data, catalog, "t.json")
         self.assertIn("42.03.01", university_programs(u))           # код из «кроме» — тоже программа вуза
 
+
+    def test_bare_code_gets_direction_name_not_other_program(self):
+        from app.benefits import BenefitsCatalog
+        from app.routes import program_label, program_names
+
+        data = university()
+        data["rules"][0]["programs"] = ["01.03.02 Прикладной анализ данных"]    # программа другого вуза
+        names = program_names(BenefitsCatalog([parse_file(data, sample_catalog(), "t.json")]))
+        self.assertEqual(program_label("01.03.02", names), "01.03.02 Прикладная математика и информатика")

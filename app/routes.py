@@ -21,16 +21,24 @@ _ALL = re.compile(r"(?i)^все")
 
 
 def program_names(benefits: BenefitsCatalog) -> dict[str, str]:
-    """Код направления → название («38.03.01» → «Экономика») из документов, где оно написано."""
-    names: dict[str, str] = {}
+    """Код направления → название («38.03.01» → «Экономика») для голых кодов в документах.
+
+    Сначала официальные названия направлений (каталог программ и перечень Минобрнауки),
+    потом — из документов вузов. Иначе голый код МТУСИ получал название чужой программы
+    («01.03.02» → «Прикладной анализ данных» из ВШЭ).
+    """
+    names: dict[str, str] = dict(direction_names())
+    for programs in program_catalog().values():
+        for p in programs:
+            m = re.match(r"(\d\d\.\d\d\.\d\d)\s+(.+)", p)
+            if m:
+                names.setdefault(m.group(1), m.group(2).strip())
     for u in benefits.latest():
         for r in u.rules:
             for p in r.programs or ():
                 m = re.match(r"(\d\d\.\d\d\.\d\d)\s+([^—(]+)", p)
                 if m:
                     names.setdefault(m.group(1), m.group(2).strip())
-    for code, name in direction_names().items():     # коды, у которых в документах вузов нет названия
-        names.setdefault(code, name)
     return names
 
 
