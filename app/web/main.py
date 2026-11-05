@@ -889,16 +889,20 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
 
     @app.post("/admin/client/{code}/goals")
     def admin_add_goal(request: Request, code: str, csrf: str = Form(""), university: str = Form(""),
-                       program: str = Form("")):
+                       program: list[str] = Form([])):
         admin_post(request, csrf)
         u = benefits.get(university)
         if u is None:
             raise HTTPException(422, "Нет такого вуза")
-        program = " ".join(program.split())[:120]      # не из документа вуза — своя, как вписал куратор
+        # несколько программ разом; не из документа вуза — своя, как вписал куратор
+        programs = list(dict.fromkeys(" ".join(p.split())[:120] for p in program[:30])) or [""]
+        if len(programs) > 1:
+            programs = [p for p in programs if p]      # «любая» вместе с конкретными не нужна
         with db() as s:
             user = client_by_code(s, code)
-            if s.crm_add_goal(user, u.university, program):
-                s.crm_log(user, f"Цель: {u.university}" + (f", {program_label(program, names)}" if program else ""))
+            for prog in programs:
+                if s.crm_add_goal(user, u.university, prog):
+                    s.crm_log(user, f"Цель: {u.university}" + (f", {program_label(prog, names)}" if prog else ""))
         return RedirectResponse(f"/admin/client/{code}#goals", status_code=303)
 
     @app.post("/admin/client/{code}/goals/{goal_id}/delete")

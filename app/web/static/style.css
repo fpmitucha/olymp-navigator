@@ -632,3 +632,9 @@ details.more[open] summary { display: none; }
 .ap-foot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
 .ap td:first-child, .ap th:first-child { width: 36px; }
 .ap input[type=checkbox] { width: 20px; height: 20px; }
+
+.pp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pp-chip { border: 0; border-radius: 999px; padding: 6px 12px; background: #f7efdc; color: #232326; font: inherit;
+  font-size: 14px; font-weight: 600; cursor: pointer; min-height: 32px; text-align: left; }
+.pp-chip:hover { background: #efdfb8; }
+.pp-list li.sel { font-weight: 700; }

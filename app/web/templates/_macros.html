@@ -51,20 +51,23 @@
 {%- endmacro %}
 
 {# Вуз + поиск по программам: печатаешь пару букв — под полем похожие программы этого вуза.
+   multi — можно отметить несколько программ (чипы над полем), custom — вписать свою.
    Работает одинаково во всех браузерах (option hidden в Safari не прячется). #}
-{% macro program_picker(uni_programs, first_label='', required=False, custom=False) -%}
-<div class="pp" data-programs="{{ uni_programs|tojson|forceescape }}" data-custom="{{ '1' if custom else '' }}">
+{% macro program_picker(uni_programs, first_label='', required=False, custom=False, multi=False) -%}
+<div class="pp" data-programs="{{ uni_programs|tojson|forceescape }}" data-custom="{{ '1' if custom else '' }}" data-multi="{{ '1' if multi else '' }}">
   <select class="field pp-uni" name="university" aria-label="Вуз" {% if required %}required{% endif %}>
     {% if first_label %}<option value="">{{ first_label }}</option>{% endif %}
     {% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}
   </select>
   <div class="pp-box">
-    <input class="field pp-q" type="search" autocomplete="off" placeholder="Любая программа — или начни вводить название, код"
+    <div class="pp-chips" hidden></div>
+    <input class="field pp-q" type="search" autocomplete="off"
+           placeholder="{{ 'Любая программа — или начни вводить и отметь одну или несколько' if multi else 'Любая программа — или начни вводить название, код' }}"
            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Программа"
            autocorrect="off" autocapitalize="off" spellcheck="false">
-    <input type="hidden" name="program" value="">
-    <ul class="pp-list" role="listbox" hidden></ul>
-    <p class="pp-hint small form-error" hidden>Подходит несколько программ — выбери одну из списка или очисти поле («любая»).</p>
+    <div class="pp-hidden"></div>
+    <ul class="pp-list" role="listbox" {% if multi %}aria-multiselectable="true"{% endif %} hidden></ul>
+    <p class="pp-hint small form-error" hidden>Подходит несколько программ — выбери из списка или очисти поле («любая»).</p>
   </div>
 </div>
 <script>
@@ -74,24 +77,47 @@
   window.ppInit = () => document.querySelectorAll('.pp:not([data-ready])').forEach((root) => {
     root.dataset.ready = '1';
     const data = JSON.parse(root.dataset.programs);
+    const custom = root.dataset.custom === '1', multi = root.dataset.multi === '1';
     const uni = root.querySelector('.pp-uni'), q = root.querySelector('.pp-q');
-    const hidden = root.querySelector('input[name=program]'), list = root.querySelector('.pp-list');
-    const hint = root.querySelector('.pp-hint');
-    const custom = root.dataset.custom === '1';
-    let items = [], active = -1;
+    const box = root.querySelector('.pp-hidden'), list = root.querySelector('.pp-list');
+    const chips = root.querySelector('.pp-chips'), hint = root.querySelector('.pp-hint');
+    let chosen = [], items = [], active = -1;      // chosen: [[value, label], …]
+    const sync = () => {
+      box.replaceChildren(...(chosen.length ? chosen : [['', '']]).map(([v]) => {
+        const i = document.createElement('input');
+        i.type = 'hidden'; i.name = 'program'; i.value = v;
+        return i;
+      }));
+      if (!multi) return;
+      chips.hidden = !chosen.length;
+      chips.replaceChildren(...chosen.map(([v, label]) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'pp-chip'; b.textContent = label + ' ×';
+        b.setAttribute('aria-label', `Убрать ${label}`);
+        b.addEventListener('click', () => { chosen = chosen.filter((c) => c[0] !== v); sync(); if (!list.hidden) render(); });
+        return b;
+      }));
+    };
     const matches = () => {
       const words = norm(q.value).split(/\s+/).filter(Boolean);
       return (data[uni.value] || []).filter(([, label]) => words.every((w) => norm(label).includes(w)));
     };
     const close = () => { list.hidden = true; q.setAttribute('aria-expanded', 'false'); active = -1; };
-    const pick = ([value, label]) => { hidden.value = value; q.value = label; hint.hidden = true; close(); };
+    const isOn = (v) => chosen.some((c) => c[0] === v);
+    const pick = (it) => {
+      hint.hidden = true;
+      if (!multi) { chosen = [it]; q.value = it[1]; sync(); close(); return; }
+      chosen = isOn(it[0]) ? chosen.filter((c) => c[0] !== it[0]) : [...chosen, it];
+      sync(); render();                                   // список не закрываем — можно отметить ещё
+    };
     const render = () => {
-      items = matches().slice(0, 50);
+      items = matches().slice(0, 60);
       list.replaceChildren(...items.map((it, i) => {
         const li = document.createElement('li');
         li.setAttribute('role', 'option');
-        li.textContent = it[1];
-        if (i === active) li.className = 'on';
+        li.setAttribute('aria-selected', isOn(it[0]) ? 'true' : 'false');
+        li.textContent = (multi ? (isOn(it[0]) ? '✓ ' : '+ ') : '') + it[1];
+        li.className = [i === active ? 'on' : '', isOn(it[0]) ? 'sel' : ''].join(' ').trim();
         li.addEventListener('mousedown', (e) => { e.preventDefault(); pick(it); });
         return li;
       }));
@@ -101,7 +127,7 @@
         li.setAttribute('role', 'option');
         li.className = 'own';
         li.textContent = `Своя программа: «${text}»`;
-        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick([text, text]); });
+        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick([text, text]); if (multi) { q.value = ''; render(); } });
         list.append(li);
       }
       if (!items.length) {
@@ -114,7 +140,7 @@
       }
       list.hidden = false; q.setAttribute('aria-expanded', 'true');
     };
-    q.addEventListener('input', () => { hidden.value = ''; active = -1; render(); });
+    q.addEventListener('input', () => { if (!multi) chosen = []; sync(); active = -1; render(); });
     q.addEventListener('focus', render);
     q.addEventListener('blur', close);
     q.addEventListener('keydown', (e) => {
@@ -124,14 +150,18 @@
       } else if (e.key === 'Enter' && !list.hidden && items[active]) { e.preventDefault(); pick(items[active]); }
       else if (e.key === 'Escape') close();
     });
-    uni.addEventListener('change', () => { hidden.value = ''; q.value = ''; hint.hidden = true; });
+    uni.addEventListener('change', () => { chosen = []; q.value = ''; hint.hidden = true; sync(); });
     root.closest('form').addEventListener('submit', (e) => {
-      if (!q.value.trim() || hidden.value) return;
+      const text = q.value.trim();
+      if (!text || (!multi && chosen.length)) return;
       const found = matches();
-      if (found.length === 1) { pick(found[0]); return; }
-      if (!found.length && custom) { hidden.value = q.value.trim(); return; }
+      if (multi && chosen.length && found.some((f) => isOn(f[0]))) return;   // текст — поиск по уже отмеченному
+      if (found.length === 1) { if (!isOn(found[0][0])) chosen = [...(multi ? chosen : []), found[0]]; sync(); return; }
+      if (!found.length && custom) { chosen = [...(multi ? chosen : []), [text, text]]; sync(); return; }
+      if (multi && chosen.length) return;                 // уже что-то отмечено — лишний текст не мешает
       e.preventDefault(); hint.hidden = false; q.focus();
     });
+    sync();
   });
   window.ppInit();
 })();

@@ -236,6 +236,12 @@ class CrmWebTest(unittest.TestCase):
         post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1", display_name="Маша")
         post(f"{base}/goals", university="Тестовый вуз", program="")
         post(f"{base}/goals", university="Тестовый вуз", program="  Лечебное   дело ")   # своя программа
+        admin.post(f"{base}/goals", data={"csrf": csrf, "university": "Тестовый вуз",
+                                          "program": ["Педиатрия", "Стоматология", "", "Педиатрия"]})
+        with self.app.state.db() as s:
+            progs = [g["program"] for g in s.crm_goals(self.CLIENT)]
+        self.assertTrue({"Педиатрия", "Стоматология"} <= set(progs))
+        self.assertEqual(progs.count("Педиатрия"), 1)
         self.assertIn("Лечебное дело", admin.get(base).text)
         self.assertEqual(post(f"{base}/goals", university="Нет такого").status_code, 422)
         hits = admin.get(f"{base}?q=Физтех").text
