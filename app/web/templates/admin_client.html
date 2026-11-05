@@ -27,7 +27,7 @@
           {% for g in rm.goals %}
           <form method="post" action="{{ base }}/goals/{{ g.id }}/delete" class="goal-chip">
             <input type="hidden" name="csrf" value="{{ csrf }}">
-            <span><b>{{ g.university }}</b>{% if g.program %} · {{ g.program }}{% endif %}{% if g.bvi %} <span class="ok">· БВИ: {{ g.bvi }}</span>{% endif %}</span>
+            <span><b>{{ g.university }}</b>{% if g.program %} · {{ g.program|plabel }}{% endif %}{% if g.bvi %} <span class="ok">· БВИ: {{ g.bvi }}</span>{% endif %}</span>
             <button type="submit" aria-label="Убрать цель">×</button>
           </form>
           {% else %}<p class="muted small">Цели не заданы — добавь вуз и программу, тогда у олимпиад появятся льготы и подсказки.</p>{% endfor %}

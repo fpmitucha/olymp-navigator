@@ -58,7 +58,7 @@
       {% for g in rm.goals %}
       <div class="rm-goal">
         <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="#c0952d" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z"/></svg>{{ g.university }}</h3>
-        <p>{{ g.program or 'любая программа' }}</p>
+        <p>{{ g.program|plabel or 'любая программа' }}</p>
         {% if g.bvi or g.other %}<p class="ok">{% if g.bvi %}БВИ дают {{ plural(g.bvi, 'олимпиада', 'олимпиады', 'олимпиад') }} плана{% endif %}{% if g.bvi and g.other %}, {% endif %}{% if g.other %}{{ g.other }} — 100 баллов{% endif %}</p>{% endif %}
       </div>
       {% endfor %}

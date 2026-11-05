@@ -89,10 +89,20 @@ def university_programs(u: UniversityBenefits) -> list[str]:
 
 
 def program_label(program: str, names: dict[str, str]) -> str:
-    """Голый код («38.03.01», как у МИФИ) дополняем названием."""
+    """Голый код («38.03.01», как у МИФИ) дополняем названием; «группа программ 3» — пояснением."""
     if CODE.fullmatch(program) and program in names:
         return f"{program} {names[program]}"
-    return program
+    return program_labels().get(program, program)
+
+
+@lru_cache(maxsize=1)
+def program_labels() -> dict[str, str]:
+    """Понятные подписи для программ, записанных в документах условно (catalog.json, «_labels»)."""
+    try:
+        data = json.loads(_CATALOG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return {k: v for k, v in (data.get("_labels") or {}).items() if not k.startswith("_")}
 
 
 def covers(rule: Rule, program: str) -> bool:

@@ -414,6 +414,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     from app.routes import RouteItem, program_label, program_names, route as build_route, university_programs
 
     names = program_names(benefits)
+    templates.env.filters["plabel"] = lambda p: program_label(p, names) if p else p
 
     @app.get("/route", response_class=HTMLResponse)
     def route_start(request: Request):
