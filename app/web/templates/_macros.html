@@ -49,3 +49,77 @@
   <a class="btn gold" href="/help">Хочу сопровождение</a>
 </div>
 {%- endmacro %}
+
+{# Вуз + поиск по программам: печатаешь пару букв — под полем похожие программы этого вуза.
+   Работает одинаково во всех браузерах (option hidden в Safari не прячется). #}
+{% macro program_picker(uni_programs, first_label='', required=False) -%}
+<div class="pp" data-programs="{{ uni_programs|tojson|forceescape }}">
+  <select class="field pp-uni" name="university" aria-label="Вуз" {% if required %}required{% endif %}>
+    {% if first_label %}<option value="">{{ first_label }}</option>{% endif %}
+    {% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}
+  </select>
+  <div class="pp-box">
+    <input class="field pp-q" type="search" autocomplete="off" placeholder="Любая программа — или начни вводить название, код"
+           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Программа">
+    <input type="hidden" name="program" value="">
+    <ul class="pp-list" role="listbox" hidden></ul>
+    <p class="pp-hint small form-error" hidden>Выбери программу из списка или очисти поле — тогда «любая».</p>
+  </div>
+</div>
+<script>
+(() => {
+  if (window.ppInit) { window.ppInit(); return; }
+  const norm = (s) => s.toLowerCase().replace(/ё/g, 'е');
+  window.ppInit = () => document.querySelectorAll('.pp:not([data-ready])').forEach((root) => {
+    root.dataset.ready = '1';
+    const data = JSON.parse(root.dataset.programs);
+    const uni = root.querySelector('.pp-uni'), q = root.querySelector('.pp-q');
+    const hidden = root.querySelector('input[name=program]'), list = root.querySelector('.pp-list');
+    const hint = root.querySelector('.pp-hint');
+    let items = [], active = -1;
+    const matches = () => {
+      const words = norm(q.value).split(/\s+/).filter(Boolean);
+      return (data[uni.value] || []).filter(([, label]) => words.every((w) => norm(label).includes(w)));
+    };
+    const close = () => { list.hidden = true; q.setAttribute('aria-expanded', 'false'); active = -1; };
+    const pick = ([value, label]) => { hidden.value = value; q.value = label; hint.hidden = true; close(); };
+    const render = () => {
+      items = matches().slice(0, 50);
+      list.replaceChildren(...items.map((it, i) => {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = it[1];
+        if (i === active) li.className = 'on';
+        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick(it); });
+        return li;
+      }));
+      if (!items.length) {
+        const li = document.createElement('li');
+        li.className = 'none';
+        li.textContent = (data[uni.value] || []).length ? 'Ничего похожего' : (uni.value ? 'У вуза нет отдельных программ — будет «любая»' : 'Сначала выбери вуз');
+        list.append(li);
+      }
+      list.hidden = false; q.setAttribute('aria-expanded', 'true');
+    };
+    q.addEventListener('input', () => { hidden.value = ''; active = -1; render(); });
+    q.addEventListener('focus', render);
+    q.addEventListener('blur', close);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault(); if (list.hidden) render();
+        active = Math.max(0, Math.min(items.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1))); render();
+      } else if (e.key === 'Enter' && !list.hidden && items[active]) { e.preventDefault(); pick(items[active]); }
+      else if (e.key === 'Escape') close();
+    });
+    uni.addEventListener('change', () => { hidden.value = ''; q.value = ''; hint.hidden = true; });
+    root.closest('form').addEventListener('submit', (e) => {
+      if (!q.value.trim() || hidden.value) return;
+      const found = matches();
+      if (found.length === 1) { pick(found[0]); return; }
+      e.preventDefault(); hint.hidden = false; q.focus();
+    });
+  });
+  window.ppInit();
+})();
+</script>
+{%- endmacro %}

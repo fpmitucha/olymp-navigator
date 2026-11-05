@@ -192,7 +192,12 @@ class CrmWebTest(unittest.TestCase):
         post("/admin/groups", name="11 класс, ноябрь")
         with self.app.state.db() as s:
             gid = s.crm_groups()[0]["id"]
-        self.assertIn("Без имени", admin.get(base).text)
+        page = admin.get(base).text
+        self.assertIn("Без имени", page)
+        self.assertIn('class="pp"', page)                                # вуз + поиск по программам
+        self.assertIn("Тестовый вуз", page)
+        self.assertRegex(admin.get("/").text, r'/static/style\.css\?v=\w{10}')
+        self.assertIn("bv-", admin.get("/sw.js").text)
         post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1",
              display_name="  Маша   Иванова ", grade="10")
         self.assertIn("Маша Иванова", admin.get("/admin").text)            # имя задал куратор

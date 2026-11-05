@@ -610,3 +610,16 @@ details.more[open] summary { display: none; }
   input, select, textarea { font-size: 16px; }   /* без автозума на iPhone */
 }
 @media (display-mode: standalone) { .site-foot { display: none; } }
+
+/* выбор программы с поиском */
+.pp { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; flex: 1 1 100%; }
+.pp-uni { flex: 0 1 220px; }
+.pp-box { position: relative; flex: 1 1 320px; min-width: 0; }
+.pp-q { width: 100%; box-sizing: border-box; }
+.pp-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none;
+  max-height: 320px; overflow-y: auto; background: #fff; border: 1px solid #e6e6ea; border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(35, 35, 38, .14); }
+.pp-list li { padding: 10px 12px; border-radius: 8px; cursor: pointer; line-height: 1.35; }
+.pp-list li:hover, .pp-list li.on { background: #f7efdc; }
+.pp-list li.none { color: #6e6e78; cursor: default; background: none; }
+.pp-hint { margin: 6px 0 0; }

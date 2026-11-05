@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import program_picker %}
 {% block title %}Генератор новостей · Админка{% endblock %}
 {% block head %}<meta name="robots" content="noindex">{% endblock %}
 {% block main %}
@@ -73,12 +74,7 @@
 
         <fieldset class="adm-card" data-for="benefits">
           <legend>Вуз и программа</legend>
-          <select class="field" name="university" onchange="for (const o of this.form.program.querySelectorAll('[data-uni]')) o.hidden = o.dataset.uni !== this.value; this.form.program.value = ''">
-            {% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}
-          </select>
-          <select class="field" name="program" aria-label="Программа"><option value="">любая программа</option>
-            {% for uni, progs in uni_programs.items() %}{% set first_uni = loop.first %}{% for p, label in progs %}<option data-uni="{{ uni }}" value="{{ p }}" {% if not first_uni %}hidden{% endif %}>{{ label }}</option>{% endfor %}{% endfor %}
-          </select>
+          {{ program_picker(uni_programs) }}
         </fieldset>
 
         <fieldset class="adm-card">

@@ -125,6 +125,9 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     app.mount("/assets", StaticFiles(directory=HERE.parent / "assets"), name="assets")
     templates = Jinja2Templates(directory=HERE / "templates")
+    # версия стилей: новый style.css → новый адрес, и PWA не держит старый из кэша
+    static_v = hashlib.sha256((HERE / "static" / "style.css").read_bytes()).hexdigest()[:10]
+    templates.env.globals["static_v"] = static_v
     admission_year = int(catalog.current_year[:4]) + 1
     universities = benefits.latest()
     by_slug = {slug(u.university): u for u in universities}
@@ -1455,8 +1458,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     def service_worker():
         """Сервис-воркер: кэширует стили и иконки, без сети показывает страницу «нет связи»."""
         js = """
-const CACHE = 'bv-v1';
-const SHELL = ['/static/style.css', '/assets/logo-mark.png', '/assets/icon-192.png', '/offline'];
+const CACHE = 'bv-__V__';
+const SHELL = ['/static/style.css?v=__V__', '/assets/logo-mark.png', '/assets/icon-192.png', '/offline'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys =>
   Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1473,7 +1476,8 @@ self.addEventListener('fetch', e => {
   }
 });
 """
-        return Response(js, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        return Response(js.replace("__V__", static_v), media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
 
     @app.get("/offline", response_class=HTMLResponse)
     def offline(request: Request):
