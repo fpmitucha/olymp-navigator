@@ -865,7 +865,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         uni_programs = {u.university: [(p, program_label(p, names)) for p in university_programs(u)]
                         for u in universities}
         return render(request, "admin_client.html", client=client, rm=rm, events=events, groups=groups,
-                      q=q, hits=hits, suggestions=crm.suggestions(catalog, benefits, goals, taken),
+                      q=q, hits=hits, picks=crm.auto_pick(catalog, benefits, goals, taken),
+                      draft_unis={u.university for u in universities if u.is_draft},
                       uni_programs=uni_programs, access_labels=crm.ACCESS_LABELS, benefit_short=crm.BENEFIT_SHORT,
                       site_url=site_url, today=today(), attention=attention(rm))
 
@@ -925,6 +926,31 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                     s.crm_log(member, f"Добавлена олимпиада: {name}")
                     notify(s, member, f"<b>В план добавлена олимпиада</b>\n{crm.escape(name)}. "
                                       "Напомним о регистрации и этапах.")
+        return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
+
+    @app.post("/admin/client/{code}/olympiads/bulk")
+    async def admin_add_olympiads_bulk(request: Request, code: str):
+        """Автоподбор: куратор отметил олимпиады — добавляем разом и шлём клиенту одно сообщение."""
+        form = await request.form()
+        admin_post(request, str(form.get("csrf", "")))
+        picked = []
+        for value in form.getlist("pick")[:100]:
+            oid, _, profile = str(value).partition("|")
+            o = catalog.get(catalog.canonical_id(oid))
+            if o is None or (profile and profile not in o.profiles):
+                continue
+            picked.append((o, profile))
+        with db() as s:
+            user = client_by_code(s, code)
+            added = []
+            for o, profile in picked:
+                if s.crm_add_olympiad(user, o.id, profile):
+                    s.subscribe(user, o.id)
+                    name = short(o) + (f", {profile}" if profile else "")
+                    s.crm_log(user, f"Добавлена олимпиада (автоподбор): {name}")
+                    added.append(name)
+            if added:
+                notify(s, user, crm.plan_added_message(added, site_url))
         return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
 
     @app.post("/admin/client/{code}/olympiads/{row_id}/status")

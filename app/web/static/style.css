@@ -624,3 +624,11 @@ details.more[open] summary { display: none; }
 .pp-list li.own { font-weight: 700; color: #94701b; }
 .pp-list li.none { color: #6e6e78; cursor: default; background: none; }
 .pp-hint { margin: 6px 0 0; }
+
+/* автоподбор олимпиад */
+.ap-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.ap-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.ap-profile { flex: 0 1 240px; }
+.ap-foot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
+.ap td:first-child, .ap th:first-child { width: 36px; }
+.ap input[type=checkbox] { width: 20px; height: 20px; }

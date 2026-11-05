@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from html import escape
 
-from app.benefits import BENEFIT_TYPES, BenefitsCatalog
+from app.benefits import BENEFIT_TYPES, BenefitsCatalog, profile_level
 from app.catalog import Catalog, CatalogOlympiad
 from app.routes import route
 
@@ -270,15 +270,28 @@ def merge_plan(plan_json: str, stages, profile: str) -> tuple[list[dict], bool]:
         plan = json.loads(plan_json or "[]")
     except ValueError:
         plan = []
-    by_key = {(e["kind"], e["title"].lower()): e for e in plan}
+    # Ключ этапа — его id на сайте олимпиады; у одинаково названных этапов («Отборочный этап»
+    # дважды, с разными датами) ключ по названию склеивал их в один — и второй отбор терялся.
+    def key_of(e: dict) -> tuple:
+        return ("id", e["id"]) if e.get("id") else (e["kind"], e["title"].lower())
+
+    by_key = {key_of(e): e for e in plan}
     changed = False
+    claimed: set[tuple] = set()
     for st in stages:
         if st.kind not in PLAN_KINDS or not stage_fits(st.profile, profile):
             continue
         entry = {"kind": st.kind, "title": st.title,
                  "start": st.starts_at.isoformat() if st.starts_at else None,
                  "end": st.ends_at.isoformat() if st.ends_at else None}
-        key = (st.kind, st.title.lower())
+        sid = getattr(st, "external_id", None) or (f"db{st.id}" if getattr(st, "id", None) else None)
+        if sid:
+            entry["id"] = sid
+            old = by_key.get((st.kind, st.title.lower()))
+            if old is not None and not old.get("id") and (st.kind, st.title.lower()) not in claimed:
+                del by_key[(st.kind, st.title.lower())]   # запись из старого снимка без id — обновляем её
+            claimed.add((st.kind, st.title.lower()))
+        key = key_of(entry)
         if by_key.get(key) != entry:
             by_key[key] = entry
             changed = True
@@ -335,6 +348,57 @@ def suggestions(catalog: Catalog, benefits: BenefitsCatalog, goals: list[dict], 
     ranked.sort(key=lambda x: (x[1] not in plan_profiles, -len(x[2]), x[0].best_level(catalog.current_year) or 9,
                                x[0].name))
     return ranked[:limit]
+
+
+@dataclass
+class Pick:
+    """Олимпиада автоподбора: что она даёт в вузах-целях клиента."""
+    olympiad: CatalogOlympiad
+    profile: str
+    level: int | None
+    benefits: list[tuple[str, str, str]]     # (вуз, льгота, prize | winner), лучшая по каждому вузу
+
+    @property
+    def key(self) -> str:
+        return f"{self.olympiad.id}|{self.profile}"
+
+    @property
+    def bvi_unis(self) -> list[str]:
+        return sorted(u for u, b, _ in self.benefits if b == "bvi")
+
+
+def auto_pick(catalog: Catalog, benefits: BenefitsCatalog, goals: list[dict],
+              taken: set[tuple[str, str]]) -> dict[str, list[Pick]]:
+    """Автоподбор под цели: {"bvi": [...], "score100": [...]}.
+
+    БВИ — олимпиады, которые дают БВИ хотя бы в одном вузе-цели; 100 баллов — остальные,
+    что дают 100 за ЕГЭ или ДВИ. ВсОШ не предлагаем: её финал даёт БВИ везде, её ведут отдельно.
+    Сначала — где льгота и призёру, больше вузов-целей и выше уровень олимпиады.
+    """
+    year = catalog.current_year
+    out: dict[str, list[Pick]] = {"bvi": [], "score100": []}
+    for (oid, profile), found in goal_benefits(benefits, goals, year).items():
+        o = catalog.get(oid)
+        if o is None or o.is_vsosh or (oid, profile) in taken:
+            continue
+        level, _ = profile_level(o, profile, year)
+        found = sorted(found, key=lambda x: (_rank(x[1]), x[2] != "prize", x[0]))
+        group = "bvi" if any(b == "bvi" for _, b, _ in found) else "score100"
+        out[group].append(Pick(o, profile, level, found))
+    for group, items in out.items():
+        def score(p: Pick, group=group):
+            main = [x for x in p.benefits if (x[1] == "bvi") == (group == "bvi")]
+            return (-len(main), -sum(d == "prize" for _, _, d in main), p.level or 9, p.olympiad.name, p.profile)
+        items.sort(key=score)
+    return out
+
+
+def plan_added_message(names: list[str], site_url: str = "") -> str:
+    """Одно сообщение клиенту на всю пачку одобренных олимпиад."""
+    head = "В план добавлена олимпиада" if len(names) == 1 else f"В план добавлено олимпиад: {len(names)}"
+    lines = "\n".join(f"• {escape(n)}" for n in names[:15])
+    more = f"\n…и ещё {len(names) - 15}" if len(names) > 15 else ""
+    return f"<b>{head}</b>\n{lines}{more}\nНапомним о регистрации и этапах." + _link(site_url)
 
 
 def _link(site_url: str) -> str:

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import unittest
 from datetime import date
@@ -115,6 +116,31 @@ class RoadmapTest(unittest.TestCase):
         rm2 = build_roadmap(self.catalog, self.benefits, goals, rows, lambda _: [], date(2026, 12, 20))
         self.assertEqual(rm2.items[0].n, 2)
         self.assertIsNone(rm2.items[0].plan_changed)
+
+    def test_same_named_qualifying_stages_are_not_merged(self):
+        from app.crm import build_roadmap
+
+        self.s.upsert_stages([
+            self.stage("qualifying", "Отборочный этап", date(2026, 11, 22), date(2026, 11, 23), "биология", 1),
+            self.stage("qualifying", "Отборочный этап", date(2026, 12, 13), date(2026, 12, 14), "биология", 2),
+        ])
+        rows = [{"id": 1, "olympiad_id": self.fiztech.id, "profile": "биология", "status": "todo",
+                 "reg_deadline": None, "plan": json.dumps([{"kind": "qualifying", "title": "Отборочный этап",
+                                                            "start": "2026-12-13", "end": "2026-12-14"}])}]
+        rm = build_roadmap(self.catalog, self.benefits, [], rows, self.s.stages, date(2026, 11, 4))
+        self.assertEqual(rm.items[0].n, 2)                 # старый снимок без id тоже обновился
+
+    def test_auto_pick(self):
+        from app.crm import auto_pick
+
+        goals = [{"id": 1, "university": "Тестовый вуз", "program": ""}]
+        picks = auto_pick(self.catalog, self.benefits, goals, set())
+        self.assertTrue(any(p.olympiad.id == self.fiztech.id and p.profile == "математика" for p in picks["bvi"]))
+        self.assertFalse(any(p.olympiad.is_vsosh for p in picks["bvi"] + picks["score100"]))
+        self.assertTrue(all(not p.bvi_unis for p in picks["score100"]))
+        taken = {(self.fiztech.id, "математика")}
+        self.assertFalse(any(p.olympiad.id == self.fiztech.id and p.profile == "математика"
+                             for p in auto_pick(self.catalog, self.benefits, goals, taken)["bvi"]))
 
     def test_statuses(self):
         from app.crm import normalize_status, progress, status_label, status_options, valid_status
@@ -283,6 +309,31 @@ class CrmWebTest(unittest.TestCase):
 class GoalsFromListTest(CrmWebTest):
     def test_full_flow(self):  # не повторяем большой сценарий
         pass
+
+    def test_auto_pick_bulk_add(self):
+        client, _ = self.login(self.CLIENT)
+        code = re.search(r"Твой ID</span> (\d{3}) (\d{3})", client.get("/me").text)
+        code = code.group(1) + code.group(2)
+        admin, csrf = self.login(self.ADMIN)
+        post = lambda url, **data: admin.post(url, data={"csrf": csrf, **data}, follow_redirects=False)
+        post("/admin/open", code=code)
+        base = f"/admin/client/{code}"
+        self.assertIn("Сначала задай цель", admin.get(base).text)
+        post(f"{base}/goals", university="Тестовый вуз", program="")
+        page = admin.get(base).text
+        picks = re.findall(r'name="pick" value="([^"]+)"', page)
+        self.assertIn(f"{self.fiztech.id}|математика", picks)
+        with self.app.state.db() as s:
+            before = len(s.pending_messages())
+        r = admin.post(f"{base}/olympiads/bulk", data={"csrf": csrf, "pick": picks[:2] + ["nope|x"]},
+                       follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        with self.app.state.db() as s:
+            self.assertEqual(len(s.crm_olympiads(self.CLIENT)), 2)
+            msgs = s.pending_messages()
+            self.assertEqual(len(msgs), before + 1)                        # одно сообщение на всю пачку
+            self.assertIn("В план добавлено олимпиад: 2", msgs[-1]["text"])
+        self.assertNotIn(f'value="{picks[0]}"', admin.get(base).text)    # добавленное из подбора ушло
 
     def test_add_university_from_list_and_cabinet(self):
         client, csrf = self.login(self.CLIENT)

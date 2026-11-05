@@ -96,18 +96,83 @@
         {% endfor %}
         {% if q and not hits %}<p class="muted small">Ничего не нашлось.</p>{% endif %}
 
-        {% if suggestions %}
-        <p class="muted small" style="margin:16px 0 8px">Подходят под цели клиента (БВИ призёру):</p>
-        <div class="adm-suggest">
-          {% for o, profile, unis in suggestions %}
-          <form method="post" action="{{ base }}/olympiads">
-            <input type="hidden" name="csrf" value="{{ csrf }}">
-            <input type="hidden" name="olympiad_id" value="{{ o.id }}">
-            <input type="hidden" name="profile" value="{{ profile }}">
-            <button class="chip" type="submit">+ {{ short(o) }}, {{ profile }} · {{ unis|join(', ') }}</button>
-          </form>
+      </section>
+
+      <section class="adm-card" id="autopick">
+        <div class="rm-head"><h2>Автоподбор под цели</h2><span class="muted small">клиент ничего не увидит, пока не нажмёшь «Добавить»</span></div>
+        {% if not rm.goals %}
+        <p class="muted small">Сначала задай цель — вуз и программу: подберём олимпиады, которые дают туда БВИ и 100 баллов.</p>
+        {% elif not picks.bvi and not picks.score100 %}
+        <p class="muted small">Под эти цели новых олимпиад нет — всё подходящее уже в плане.</p>
+        {% else %}
+        <form method="post" action="{{ base }}/olympiads/bulk" class="ap" id="ap-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <div class="ap-bar">
+            <div class="ap-tabs" role="tablist">
+              <button type="button" class="chip on" data-tab="bvi" role="tab" aria-selected="true">БВИ · {{ picks.bvi|length }}</button>
+              <button type="button" class="chip" data-tab="score100" role="tab" aria-selected="false">Только 100 баллов · {{ picks.score100|length }}</button>
+            </div>
+            <select class="field ap-profile" aria-label="Профиль олимпиады">
+              <option value="">Все профили</option>
+              {% for p in (picks.bvi + picks.score100)|map(attribute='profile')|unique|sort %}<option>{{ p }}</option>{% endfor %}
+            </select>
+            <label class="small check"><input type="checkbox" class="ap-prize"> только где льгота и призёру</label>
+          </div>
+          {% set drafts = rm.goals|map(attribute='university')|select('in', draft_unis)|unique|sort %}{% if drafts %}<p class="small warn">Документ {{ drafts|join(', ') }} — проект: профили олимпиад вуз ещё не уточнил, поэтому в подборе все профили. Сузь фильтром по профилю.</p>{% endif %}
+          {% for group in ['bvi', 'score100'] %}
+          <div class="adm-table flat ap-group" data-group="{{ group }}" {% if group != 'bvi' %}hidden{% endif %}>
+            <table>
+              <thead><tr><th><input type="checkbox" class="ap-all" aria-label="Выбрать все видимые"></th><th>Олимпиада</th><th>Уровень</th><th>Что даёт в целях</th></tr></thead>
+              <tbody>
+              {% for p in picks[group] %}
+              {% set prize_ok = p.benefits|selectattr(2, 'equalto', 'prize')|list %}
+              <tr data-profile="{{ p.profile }}" data-prize="{{ '1' if prize_ok else '' }}">
+                <td><input type="checkbox" name="pick" value="{{ p.key }}" aria-label="{{ short(p.olympiad) }}, {{ p.profile }}"></td>
+                <td><a class="strong" href="/olympiad/{{ p.olympiad.id }}" target="_blank" rel="noopener">{{ short(p.olympiad) }}</a><div class="muted small">{{ p.profile }}</div></td>
+                <td class="small">{{ p.level or '—' }}</td>
+                <td class="small">{% for uni, b, who in p.benefits %}<div class="nowrap {{ 'ok' if b == 'bvi' else '' }}">{{ uni }} · {{ benefit_short[b] }}{% if who == 'winner' %} <span class="muted">только победителю</span>{% endif %}{% if uni in draft_unis %} <span class="warn" title="Вуз ещё не утвердил профили — правила из проекта документа">проект</span>{% endif %}</div>{% endfor %}</td>
+              </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
           {% endfor %}
-        </div>
+          <div class="ap-foot">
+            <button class="btn" type="submit" disabled>Добавить выбранные</button>
+            <span class="muted small">Клиенту уйдёт одно сообщение со списком.</span>
+          </div>
+        </form>
+        <script>
+        (() => {
+          const f = document.getElementById('ap-form');
+          const btn = f.querySelector('button[type=submit]');
+          let tab = 'bvi';
+          const rows = () => f.querySelectorAll(`.ap-group[data-group="${tab}"] tbody tr`);
+          const apply = () => {
+            const prof = f.querySelector('.ap-profile').value, prize = f.querySelector('.ap-prize').checked;
+            f.querySelectorAll('.ap-group').forEach((g) => { g.hidden = g.dataset.group !== tab; });
+            f.querySelectorAll('tbody tr').forEach((r) => { r.hidden = (prof && r.dataset.profile !== prof) || (prize && !r.dataset.prize); });
+            count();
+          };
+          const count = () => {
+            const n = f.querySelectorAll('input[name=pick]:checked').length;
+            btn.disabled = !n;
+            btn.textContent = n ? `Добавить выбранные · ${n}` : 'Добавить выбранные';
+          };
+          f.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+            tab = b.dataset.tab;
+            f.querySelectorAll('[data-tab]').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b); });
+            apply();
+          }));
+          f.querySelector('.ap-profile').addEventListener('change', apply);
+          f.querySelector('.ap-prize').addEventListener('change', apply);
+          f.querySelectorAll('.ap-all').forEach((a) => a.addEventListener('change', () => {
+            a.closest('table').querySelectorAll('tbody tr').forEach((r) => { if (!r.hidden) r.querySelector('input').checked = a.checked; });
+            count();
+          }));
+          f.addEventListener('change', (e) => { if (e.target.name === 'pick') count(); });
+        })();
+        </script>
         {% endif %}
       </section>
     </div>
