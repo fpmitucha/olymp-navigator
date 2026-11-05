@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 from app.benefits import BENEFIT_TYPES, BenefitsCatalog, Rule, UniversityBenefits
 from app.catalog import CatalogOlympiad
@@ -26,12 +29,54 @@ def program_names(benefits: BenefitsCatalog) -> dict[str, str]:
                 m = re.match(r"(\d\d\.\d\d\.\d\d)\s+([^—(]+)", p)
                 if m:
                     names.setdefault(m.group(1), m.group(2).strip())
+    for code, name in direction_names().items():     # коды, у которых в документах вузов нет названия
+        names.setdefault(code, name)
     return names
 
 
+_CATALOG_FILE = Path(__file__).resolve().parent.parent / "benefits" / "programs" / "catalog.json"
+
+
+@lru_cache(maxsize=1)
+def program_catalog() -> dict[str, list[str]]:
+    """Официальные списки программ вузов сверх документов о льготах (benefits/programs/catalog.json)."""
+    try:
+        data = json.loads(_CATALOG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return {uni: list(v.get("programs") or []) for uni, v in data.items() if not uni.startswith("_")}
+
+
+@lru_cache(maxsize=1)
+def direction_names() -> dict[str, str]:
+    """Названия направлений по коду из перечня Минобрнауки (catalog.json, «_direction_names»)."""
+    try:
+        data = json.loads(_CATALOG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return {k: v for k, v in (data.get("_direction_names") or {}).items() if CODE.fullmatch(k)}
+
+
 def university_programs(u: UniversityBenefits) -> list[str]:
-    """Программы, которые упоминаются в правилах вуза (без «все, кроме …»)."""
+    """Программы вуза для выбора цели и подбора.
+
+    Берём программы из правил; коды из «все, кроме …» — это тоже программы вуза;
+    плюс официальный список вуза из каталога — только коды, которых в правилах нет
+    (иначе одна программа появилась бы дважды под разными названиями).
+    """
     found = {p for r in u.rules for p in r.programs or () if not _ALL.match(p)}
+    codes = {m.group() for p in found for m in [CODE.match(p)] if m}
+    for r in u.rules:
+        for p in r.programs or ():
+            if _ALL.match(p):
+                codes_here = set(CODE.findall(p)) - codes
+                found |= codes_here
+                codes |= codes_here
+    for p in program_catalog().get(u.university, []):
+        m = CODE.match(p)
+        if m and m.group() not in codes:
+            found.add(p)
+            codes.add(m.group())
     return sorted(found, key=lambda p: (CODE.match(p) is None, p))
 
 

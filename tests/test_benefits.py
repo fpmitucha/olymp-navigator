@@ -191,3 +191,17 @@ class FitTest(unittest.TestCase):
         self.assertFalse(rule_fits(r, "математика", "winner", 11, 2))
         any_rule = SimpleNamespace(profiles=None, diploma="any", grades=None, levels=None)
         self.assertTrue(rule_fits(any_rule, "химия", "prize", 9, 3))
+
+
+class ProgramCatalogTest(unittest.TestCase):
+    def test_catalog_and_exclusions(self):
+        from app.routes import direction_names, program_catalog, university_programs
+
+        self.assertIn("МФТИ", program_catalog())
+        self.assertEqual(direction_names()["34.03.01"], "Сестринское дело")
+        catalog = sample_catalog()
+        data = university()
+        data["rules"][0]["programs"] = ["все, кроме 42.03.01"]
+        u = parse_file(data, catalog, "t.json")
+        self.assertIn("42.03.01", university_programs(u))           # код из «кроме» — тоже программа вуза
+
