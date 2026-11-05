@@ -265,10 +265,14 @@ def _date(value: str | None) -> date | None:
 
 
 # Имя клиента в CRM: заданное куратором → из профиля → из Telegram
+_SELF_NAME = ("COALESCE(NULLIF(p.name, ''), "
+              "NULLIF(trim(coalesce(bu.first_name, '') || ' ' || coalesce(bu.last_name, '')), ''), "
+              "'@' || bu.username)")
+# name — для куратора (его подпись главнее), public_name — то, что видят клиент и родители:
+# имя, которое клиент указал сам, иначе имя из Telegram. Подпись куратора клиенту не показываем.
 _CLIENT_NAME = (
-    "COALESCE(NULLIF(c.display_name, ''), NULLIF(p.name, ''), "
-    "NULLIF(trim(coalesce(bu.first_name, '') || ' ' || coalesce(bu.last_name, '')), ''), "
-    "'@' || bu.username) AS name, COALESCE(c.grade_override, p.grade) AS grade"
+    "COALESCE(NULLIF(c.display_name, ''), " + _SELF_NAME + ") AS name, " + _SELF_NAME + " AS public_name, "
+    "COALESCE(c.grade_override, p.grade) AS grade"
 )
 
 

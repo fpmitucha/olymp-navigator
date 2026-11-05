@@ -28,7 +28,7 @@
   <section class="rm-hero">
     <div>
       <p class="kicker">Сопровождение · сезон {{ current_year }}</p>
-      <h1>{% if client.name %}{{ client.name }}, твой путь в вуз{% else %}Твой путь в вуз{% endif %}</h1>
+      <h1>{% if client.public_name %}{{ client.public_name }}, твой путь в вуз{% else %}Твой путь в вуз{% endif %}</h1>
       <p class="muted">{% if client.grade %}{{ client.grade }} класс · {% endif %}куратор отмечает каждый шаг, здесь видно, что сделано и что дальше</p>
     </div>
     {% if not shared %}

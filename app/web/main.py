@@ -231,7 +231,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         pending_access = pending_news = pending_unis = 0
         if user:
             with db() as s:
-                name = s.profile(user)["name"]
+                name = s.profile(user)["name"] or (s.user_info(user)["first_name"] or "")
                 if admin_id and user == admin_id:
                     pending_access = len(s.crm_accesses(status="pending"))
                     pending_news = s.news_count("draft")
@@ -544,7 +544,10 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                             key=lambda st: st.starts_at or date.max)
             code = s.user_code(user)
             has_roadmap = s.crm_client(user) is not None
-            phone = s.user_info(user)["phone"] or ""
+            info = s.user_info(user)
+            phone = info["phone"] or ""
+            tg_name = " ".join(filter(None, [info["first_name"], info["last_name"]])) or (
+                f"@{info['username']}" if info["username"] else "")
         diplomas = []
         best_by_uni: dict[str, str] = {}
         for d in raw_diplomas:
@@ -567,7 +570,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         return render(request, "me.html", profile=profile, diplomas=diplomas, targets=targets,
                       olympiads_followed=olympiads_followed, next_stage=next_stage, stages=stages[:12],
                       today=today(), best_by_uni=best_by_uni, all_universities=universities, code=code,
-                      has_roadmap=has_roadmap, phone=phone)
+                      has_roadmap=has_roadmap, phone=phone, tg_name=tg_name)
 
     @app.post("/me/profile")
     def me_profile(request: Request, csrf: str = Form(""), name: str = Form(""), grade: int = Form(0),

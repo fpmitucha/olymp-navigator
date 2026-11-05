@@ -188,12 +188,13 @@
       </section>
 
       <section class="adm-card">
-        <h2 id="settings">Имя, настройки и заметки</h2>
+        <h2 id="settings">Подпись, настройки и заметки</h2>
         <form method="post" action="{{ base }}/settings" class="stack">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <label class="small">Имя — видит клиент и родители
-            <input class="field" name="display_name" maxlength="80" value="{{ client.display_name or '' }}" placeholder="{{ client.profile_name or client.name or 'например, Маша Иванова' }}" autocomplete="off">
+          <label class="small">Подпись для себя — клиент её не видит
+            <input class="field" name="display_name" maxlength="80" value="{{ client.display_name or '' }}" placeholder="например, Маша от Влады" autocomplete="off">
           </label>
+          <p class="small muted">Клиент и родители видят: <b>{{ client.public_name or 'без имени' }}</b> — имя, которое он указал в кабинете, или из Telegram.</p>
           <label class="small">Класс
             <select class="field" name="grade"><option value="">из профиля клиента</option>{% for n in range(5, 12) %}<option value="{{ n }}" {% if client.grade_override == n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
           </label>

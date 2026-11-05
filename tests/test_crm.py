@@ -228,7 +228,11 @@ class CrmWebTest(unittest.TestCase):
              display_name="  Маша   Иванова ", grade="10")
         self.assertIn("Маша Иванова", admin.get("/admin").text)            # имя задал куратор
         self.assertIn("10 класс", admin.get(base).text)
-        self.assertIn("Маша Иванова", client.get("/me/roadmap").text)       # клиент видит то же имя
+        self.assertNotIn("Маша Иванова", client.get("/me/roadmap").text)    # подпись куратора клиенту не видна
+        with self.app.state.db() as s:
+            s.log_bot_user(self.CLIENT, "masha", "Мария", None, "2026-11-05")
+        self.assertIn("Мария, твой путь", client.get("/me/roadmap").text)   # по умолчанию — имя из Telegram
+        self.assertIn("Мария", admin.get(base).text)
         post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1", grade="99")
         with self.app.state.db() as s:
             c = s.crm_client(self.CLIENT)
