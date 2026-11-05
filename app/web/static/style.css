@@ -621,5 +621,6 @@ details.more[open] summary { display: none; }
   box-shadow: 0 12px 32px rgba(35, 35, 38, .14); }
 .pp-list li { padding: 10px 12px; border-radius: 8px; cursor: pointer; line-height: 1.35; }
 .pp-list li:hover, .pp-list li.on { background: #f7efdc; }
+.pp-list li.own { font-weight: 700; color: #94701b; }
 .pp-list li.none { color: #6e6e78; cursor: default; background: none; }
 .pp-hint { margin: 6px 0 0; }

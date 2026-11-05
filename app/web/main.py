@@ -893,8 +893,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         u = benefits.get(university)
         if u is None:
             raise HTTPException(422, "Нет такого вуза")
-        if program and program not in university_programs(u):
-            program = ""
+        program = " ".join(program.split())[:120]      # не из документа вуза — своя, как вписал куратор
         with db() as s:
             user = client_by_code(s, code)
             if s.crm_add_goal(user, u.university, program):

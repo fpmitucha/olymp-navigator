@@ -34,7 +34,7 @@
         </div>
         <form method="post" action="{{ base }}/goals" class="adm-inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          {{ program_picker(uni_programs, first_label="Вуз…", required=True) }}
+          {{ program_picker(uni_programs, first_label="Вуз…", required=True, custom=True) }}
           <button class="btn small" type="submit">+ Добавить цель</button>
         </form>
       </section>

@@ -52,18 +52,19 @@
 
 {# Вуз + поиск по программам: печатаешь пару букв — под полем похожие программы этого вуза.
    Работает одинаково во всех браузерах (option hidden в Safari не прячется). #}
-{% macro program_picker(uni_programs, first_label='', required=False) -%}
-<div class="pp" data-programs="{{ uni_programs|tojson|forceescape }}">
+{% macro program_picker(uni_programs, first_label='', required=False, custom=False) -%}
+<div class="pp" data-programs="{{ uni_programs|tojson|forceescape }}" data-custom="{{ '1' if custom else '' }}">
   <select class="field pp-uni" name="university" aria-label="Вуз" {% if required %}required{% endif %}>
     {% if first_label %}<option value="">{{ first_label }}</option>{% endif %}
     {% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}
   </select>
   <div class="pp-box">
     <input class="field pp-q" type="search" autocomplete="off" placeholder="Любая программа — или начни вводить название, код"
-           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Программа">
+           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Программа"
+           autocorrect="off" autocapitalize="off" spellcheck="false">
     <input type="hidden" name="program" value="">
     <ul class="pp-list" role="listbox" hidden></ul>
-    <p class="pp-hint small form-error" hidden>Выбери программу из списка или очисти поле — тогда «любая».</p>
+    <p class="pp-hint small form-error" hidden>Подходит несколько программ — выбери одну из списка или очисти поле («любая»).</p>
   </div>
 </div>
 <script>
@@ -76,6 +77,7 @@
     const uni = root.querySelector('.pp-uni'), q = root.querySelector('.pp-q');
     const hidden = root.querySelector('input[name=program]'), list = root.querySelector('.pp-list');
     const hint = root.querySelector('.pp-hint');
+    const custom = root.dataset.custom === '1';
     let items = [], active = -1;
     const matches = () => {
       const words = norm(q.value).split(/\s+/).filter(Boolean);
@@ -93,10 +95,21 @@
         li.addEventListener('mousedown', (e) => { e.preventDefault(); pick(it); });
         return li;
       }));
+      const text = q.value.trim();
+      if (!items.length && text && uni.value && custom) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.className = 'own';
+        li.textContent = `Своя программа: «${text}»`;
+        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick([text, text]); });
+        list.append(li);
+      }
       if (!items.length) {
         const li = document.createElement('li');
         li.className = 'none';
-        li.textContent = (data[uni.value] || []).length ? 'Ничего похожего' : (uni.value ? 'У вуза нет отдельных программ — будет «любая»' : 'Сначала выбери вуз');
+        li.textContent = !uni.value ? 'Сначала выбери вуз'
+          : (data[uni.value] || []).length ? 'В документе вуза такой программы нет'
+          : 'В документе вуза льготы общие для всех программ — впиши название или оставь «любая»';
         list.append(li);
       }
       list.hidden = false; q.setAttribute('aria-expanded', 'true');
@@ -116,6 +129,7 @@
       if (!q.value.trim() || hidden.value) return;
       const found = matches();
       if (found.length === 1) { pick(found[0]); return; }
+      if (!found.length && custom) { hidden.value = q.value.trim(); return; }
       e.preventDefault(); hint.hidden = false; q.focus();
     });
   });

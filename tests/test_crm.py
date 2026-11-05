@@ -209,6 +209,8 @@ class CrmWebTest(unittest.TestCase):
             self.assertEqual((c["display_name"], c["grade_override"]), ("", None))
         post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1", display_name="Маша")
         post(f"{base}/goals", university="Тестовый вуз", program="")
+        post(f"{base}/goals", university="Тестовый вуз", program="  Лечебное   дело ")   # своя программа
+        self.assertIn("Лечебное дело", admin.get(base).text)
         self.assertEqual(post(f"{base}/goals", university="Нет такого").status_code, 422)
         hits = admin.get(f"{base}?q=Физтех").text
         self.assertIn(self.fiztech.id, hits)
