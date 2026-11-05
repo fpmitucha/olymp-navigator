@@ -192,7 +192,17 @@ class CrmWebTest(unittest.TestCase):
         post("/admin/groups", name="11 класс, ноябрь")
         with self.app.state.db() as s:
             gid = s.crm_groups()[0]["id"]
-        post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1")
+        self.assertIn("Без имени", admin.get(base).text)
+        post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1",
+             display_name="  Маша   Иванова ", grade="10")
+        self.assertIn("Маша Иванова", admin.get("/admin").text)            # имя задал куратор
+        self.assertIn("10 класс", admin.get(base).text)
+        self.assertIn("Маша Иванова", client.get("/me/roadmap").text)       # клиент видит то же имя
+        post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1", grade="99")
+        with self.app.state.db() as s:
+            c = s.crm_client(self.CLIENT)
+            self.assertEqual((c["display_name"], c["grade_override"]), ("", None))
+        post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1", display_name="Маша")
         post(f"{base}/goals", university="Тестовый вуз", program="")
         self.assertEqual(post(f"{base}/goals", university="Нет такого").status_code, 422)
         hits = admin.get(f"{base}?q=Физтех").text

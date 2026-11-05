@@ -7,7 +7,7 @@
   <a class="small muted" href="/admin">← Все клиенты</a>
   <div class="adm-head">
     <div>
-      <h1>{{ client.name or 'Без имени' }}</h1>
+      <h1>{{ client.name or 'Без имени' }} <a class="small linkbtn" href="#settings">изменить</a></h1>
       <p class="muted">ID {{ client.code }}{% if client.grade %} · {{ client.grade }} класс{% endif %} · сопровождение с {{ client.created_at[:10] }}</p>
     </div>
     <div class="adm-actions">
@@ -129,9 +129,15 @@
       </section>
 
       <section class="adm-card">
-        <h2>Настройки и заметки</h2>
+        <h2 id="settings">Имя, настройки и заметки</h2>
         <form method="post" action="{{ base }}/settings" class="stack">
           <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="small">Имя — видит клиент и родители
+            <input class="field" name="display_name" maxlength="80" value="{{ client.display_name or '' }}" placeholder="{{ client.profile_name or client.name or 'например, Маша Иванова' }}" autocomplete="off">
+          </label>
+          <label class="small">Класс
+            <select class="field" name="grade"><option value="">из профиля клиента</option>{% for n in range(5, 12) %}<option value="{{ n }}" {% if client.grade_override == n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
+          </label>
           <label class="small">Группа
             <select class="field" name="group_id"><option value="0">без группы</option>{% for g in groups %}<option value="{{ g.id }}" {% if g.id == client.group_id %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select>
           </label>

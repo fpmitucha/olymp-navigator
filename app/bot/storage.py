@@ -264,6 +264,14 @@ def _date(value: str | None) -> date | None:
     return date.fromisoformat(value) if value else None
 
 
+# Имя клиента в CRM: заданное куратором → из профиля → из Telegram
+_CLIENT_NAME = (
+    "COALESCE(NULLIF(c.display_name, ''), NULLIF(p.name, ''), "
+    "NULLIF(trim(coalesce(bu.first_name, '') || ' ' || coalesce(bu.last_name, '')), ''), "
+    "'@' || bu.username) AS name, COALESCE(c.grade_override, p.grade) AS grade"
+)
+
+
 class Storage:
     def __init__(self, path: Path | str):
         self.path = str(path)
@@ -282,6 +290,9 @@ class Storage:
         for column in ("username", "first_name", "last_name", "phone", "phone_at", "last_seen"):
             self._add_column("bot_user", column, "TEXT")
         self._add_column("web_session", "last_seen", "TEXT")
+        # имя и класс, которые куратор задал вручную, — главнее профиля клиента
+        self._add_column("crm_client", "display_name", "TEXT NOT NULL DEFAULT ''")
+        self._add_column("crm_client", "grade_override", "INTEGER")
         self._add_column("news", "category", "TEXT NOT NULL DEFAULT ''")
         self._add_column("news", "sources", "TEXT NOT NULL DEFAULT '[]'")
         # новости, созданные до появления разделов, — раздел по виду новости
@@ -689,8 +700,9 @@ class Storage:
 
     def crm_client(self, telegram_id: int) -> dict | None:
         row = self.conn.execute(
-            "SELECT c.*, g.name AS group_name, p.name, p.grade, uc.code FROM crm_client c "
+            "SELECT c.*, g.name AS group_name, p.name AS profile_name, " + _CLIENT_NAME + ", uc.code FROM crm_client c "
             "LEFT JOIN crm_group g ON g.id = c.group_id LEFT JOIN user_profile p ON p.telegram_id = c.telegram_id "
+            "LEFT JOIN bot_user bu ON bu.telegram_id = c.telegram_id "
             "LEFT JOIN user_code uc ON uc.telegram_id = c.telegram_id WHERE c.telegram_id = ?",
             (telegram_id,)).fetchone()
         return dict(row) if row else None
@@ -700,9 +712,10 @@ class Storage:
         return row["telegram_id"] if row else None
 
     def crm_clients(self, group_id: int | None = None) -> list[dict]:
-        sql = ("SELECT c.telegram_id, c.group_id, c.created_at, g.name AS group_name, p.name, p.grade, uc.code "
+        sql = ("SELECT c.telegram_id, c.group_id, c.created_at, g.name AS group_name, " + _CLIENT_NAME + ", uc.code "
                "FROM crm_client c LEFT JOIN crm_group g ON g.id = c.group_id "
                "LEFT JOIN user_profile p ON p.telegram_id = c.telegram_id "
+               "LEFT JOIN bot_user bu ON bu.telegram_id = c.telegram_id "
                "LEFT JOIN user_code uc ON uc.telegram_id = c.telegram_id")
         params: tuple = ()
         if group_id:
@@ -711,7 +724,7 @@ class Storage:
         return [dict(r) for r in self.conn.execute(sql + " ORDER BY c.created_at DESC", params).fetchall()]
 
     def crm_update_client(self, telegram_id: int, **fields) -> None:
-        allowed = {"group_id", "notes", "notify"}
+        allowed = {"group_id", "notes", "notify", "display_name", "grade_override"}
         for key, value in fields.items():
             if key in allowed:
                 self.conn.execute(f"UPDATE crm_client SET {key} = ? WHERE telegram_id = ?",  # noqa: S608
@@ -817,9 +830,11 @@ class Storage:
     # -- доступы к кабинетам олимпиад --------------------------------------
 
     def crm_accesses(self, telegram_id: int | None = None, status: str | None = None) -> list[dict]:
-        sql = ("SELECT a.*, o.olympiad_id, o.profile, uc.code, p.name FROM crm_access a "
+        sql = ("SELECT a.*, o.olympiad_id, o.profile, uc.code, " + _CLIENT_NAME + " FROM crm_access a "
                "JOIN crm_olympiad o ON o.id = a.crm_olympiad "
                "LEFT JOIN user_code uc ON uc.telegram_id = a.telegram_id "
+               "LEFT JOIN crm_client c ON c.telegram_id = a.telegram_id "
+               "LEFT JOIN bot_user bu ON bu.telegram_id = a.telegram_id "
                "LEFT JOIN user_profile p ON p.telegram_id = a.telegram_id WHERE 1 = 1")
         params: list = []
         if telegram_id is not None:

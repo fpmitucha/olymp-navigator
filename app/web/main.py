@@ -868,13 +868,19 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
 
     @app.post("/admin/client/{code}/settings")
     def admin_client_settings(request: Request, code: str, csrf: str = Form(""), group_id: int = Form(0),
-                              notes: str = Form(""), notify_on: str = Form("")):
+                              notes: str = Form(""), notify_on: str = Form(""), display_name: str = Form(""),
+                              grade: str = Form("")):
         admin_post(request, csrf)
+        name = " ".join(display_name.split())[:80]
+        grade_value = int(grade) if grade.isdigit() and 1 <= int(grade) <= 11 else None
         with db() as s:
             user = client_by_code(s, code)
             valid = {g["id"] for g in s.crm_groups()}
+            before = s.crm_client(user) or {}
             s.crm_update_client(user, group_id=group_id if group_id in valid else None, notes=notes[:4000],
-                                notify=1 if notify_on else 0)
+                                notify=1 if notify_on else 0, display_name=name, grade_override=grade_value)
+            if name != (before.get("display_name") or ""):
+                s.crm_log(user, f"Имя в CRM: {name}" if name else "Имя в CRM сброшено")
         return RedirectResponse(f"/admin/client/{code}", status_code=303)
 
     @app.post("/admin/client/{code}/goals")
