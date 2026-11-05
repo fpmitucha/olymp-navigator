@@ -194,7 +194,10 @@
           <label class="small">Подпись для себя — клиент её не видит
             <input class="field" name="display_name" maxlength="80" value="{{ client.display_name or '' }}" placeholder="например, Маша от Влады" autocomplete="off">
           </label>
-          <p class="small muted">Клиент и родители видят: <b>{{ client.public_name or 'без имени' }}</b> — имя, которое он указал в кабинете, или из Telegram.</p>
+          <label class="small">Имя, которое видят клиент и родители
+            <input class="field" name="public_name" maxlength="60" value="{{ client.profile_name or '' }}" placeholder="{{ client.public_name or 'из Telegram' }}" autocomplete="off">
+          </label>
+          <p class="small muted">Пусто — имя из Telegram. Клиент может поменять его сам в кабинете.</p>
           <label class="small">Класс
             <select class="field" name="grade"><option value="">из профиля клиента</option>{% for n in range(5, 12) %}<option value="{{ n }}" {% if client.grade_override == n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
           </label>

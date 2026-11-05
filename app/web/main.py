@@ -877,7 +877,7 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     @app.post("/admin/client/{code}/settings")
     def admin_client_settings(request: Request, code: str, csrf: str = Form(""), group_id: int = Form(0),
                               notes: str = Form(""), notify_on: str = Form(""), display_name: str = Form(""),
-                              grade: str = Form("")):
+                              grade: str = Form(""), public_name: str | None = Form(None)):
         admin_post(request, csrf)
         name = " ".join(display_name.split())[:80]
         grade_value = int(grade) if grade.isdigit() and 1 <= int(grade) <= 11 else None
@@ -888,7 +888,13 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             s.crm_update_client(user, group_id=group_id if group_id in valid else None, notes=notes[:4000],
                                 notify=1 if notify_on else 0, display_name=name, grade_override=grade_value)
             if name != (before.get("display_name") or ""):
-                s.crm_log(user, f"Имя в CRM: {name}" if name else "Имя в CRM сброшено")
+                s.crm_log(user, f"Подпись в CRM: {name}" if name else "Подпись в CRM сброшена")
+            if public_name is not None:            # имя, которое видит клиент: то же поле, что он правит в кабинете
+                shown = " ".join(public_name.split())[:60]
+                profile = s.profile(user)
+                if shown != (profile["name"] or ""):
+                    s.save_profile(user, shown, profile["grade"])
+                    s.crm_log(user, f"Имя для клиента: {shown}" if shown else "Имя для клиента — из Telegram")
         return RedirectResponse(f"/admin/client/{code}", status_code=303)
 
     @app.post("/admin/client/{code}/goals")
