@@ -14,7 +14,7 @@
   <article class="adm-card adm-acc">
     <div>
       <b>{{ short(a.olympiad) if a.olympiad else a.olympiad_id }}</b>{% if a.profile %}<span class="muted">, {{ a.profile }}</span>{% endif %}
-      <div class="small"><a href="/admin/client/{{ a.code }}">{{ a.name or 'Без имени' }}</a> · ID {{ a.code }} · введено {{ a.updated_at[:16]|replace('T', ' ') }} UTC</div>
+      <div class="small"><a href="/admin/client/{{ a.code }}">{{ a.name or 'Без имени' }}</a>{% if a.username %} · <a href="https://t.me/{{ a.username }}" target="_blank" rel="noopener">@{{ a.username }}</a>{% endif %} · ID {{ a.code }} · введено {{ a.updated_at[:16]|replace('T', ' ') }} UTC</div>
     </div>
     <dl class="adm-cred">
       <dt>Логин</dt><dd><code>{{ a.login }}</code></dd>

@@ -9,7 +9,7 @@
   <div class="adm-head">
     <div>
       <h1>{{ client.name or 'Без имени' }} <a class="small linkbtn" href="#settings">изменить</a></h1>
-      <p class="muted">ID {{ client.code }}{% if client.grade %} · {{ client.grade }} класс{% endif %} · сопровождение с {{ client.created_at[:10] }}</p>
+      <p class="muted">{% if client.username %}<a href="https://t.me/{{ client.username }}" target="_blank" rel="noopener">@{{ client.username }}</a> · {% endif %}ID {{ client.code }}{% if client.grade %} · {{ client.grade }} класс{% endif %} · сопровождение с {{ client.created_at[:10] }}</p>
     </div>
     <div class="adm-actions">
       <a class="btn ghost small" href="/r/{{ client.share_token }}" target="_blank" rel="noopener">Как видят родители</a>

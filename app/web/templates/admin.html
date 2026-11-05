@@ -39,7 +39,7 @@
     </details>
     <form method="get" action="/admin" class="adm-search">
       {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
-      <input class="field" type="search" name="q" value="{{ q }}" placeholder="Имя или ID" aria-label="Поиск клиента">
+      <input class="field" type="search" name="q" value="{{ q }}" placeholder="Имя, @тег или ID" aria-label="Поиск клиента">
     </form>
   </div>
 
@@ -58,7 +58,7 @@
       <tbody>
       {% for c in rows %}
         <tr>
-          <td><a class="strong" href="/admin/client/{{ c.code }}">{{ c.name or 'Без имени' }}</a><div class="muted small">ID {{ c.code }}</div></td>
+          <td><a class="strong" href="/admin/client/{{ c.code }}">{{ c.name or 'Без имени' }}</a><div class="muted small">ID {{ c.code }}{% if c.username %} · <a href="https://t.me/{{ c.username }}" target="_blank" rel="noopener">@{{ c.username }}</a>{% endif %}</div></td>
           <td>{{ c.grade or '—' }}</td>
           <td>{{ c.group_name or '—' }}</td>
           <td class="small">{{ c.goals|join(', ') or '—' }}</td>

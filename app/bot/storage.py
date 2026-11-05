@@ -272,7 +272,7 @@ _SELF_NAME = ("COALESCE(NULLIF(p.name, ''), "
 # имя, которое клиент указал сам, иначе имя из Telegram. Подпись куратора клиенту не показываем.
 _CLIENT_NAME = (
     "COALESCE(NULLIF(c.display_name, ''), " + _SELF_NAME + ") AS name, " + _SELF_NAME + " AS public_name, "
-    "COALESCE(c.grade_override, p.grade) AS grade"
+    "COALESCE(c.grade_override, p.grade) AS grade, bu.username AS username"
 )
 
 

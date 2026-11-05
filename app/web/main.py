@@ -809,7 +809,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         with db() as s:
             groups = s.crm_groups()
             for c in s.crm_clients(group or None):
-                if q and q not in (c["name"] or "").lower() and q.replace(" ", "") not in (c["code"] or ""):
+                if q and q not in (c["name"] or "").lower() and q.replace(" ", "") not in (c["code"] or "") \
+                        and q.lstrip("@") not in (c["username"] or "").lower():
                     continue
                 rm = roadmap_for(s, c["telegram_id"])
                 rows.append(dict(c, rm=rm, goals=[g.university for g in rm.goals], attention=attention(rm),

@@ -249,6 +249,8 @@ class CrmWebTest(unittest.TestCase):
             s.log_bot_user(self.CLIENT, "masha", "Мария", None, "2026-11-05")
         self.assertIn("Мария, твой путь", client.get("/me/roadmap").text)   # по умолчанию — имя из Telegram
         self.assertIn("Мария", admin.get(base).text)
+        self.assertIn("https://t.me/masha", admin.get(base).text)              # тег клиента
+        self.assertIn("@masha", admin.get("/admin?q=@mash").text)
         post(f"{base}/settings", group_id=str(gid), notes="тайная заметка", notify_on="1", display_name="Маша",
              public_name=" Маша ")
         self.assertIn("Маша, твой путь", client.get("/me/roadmap").text)    # куратор задал имя для клиента
