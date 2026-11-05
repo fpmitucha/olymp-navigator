@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, plural, closing with context %}
+{% block title %}Подбор олимпиад под вуз · Бвишечка{% endblock %}
+{% block description %}Выбери вуз и направление — покажем олимпиады этого сезона, которые дают туда БВИ или 100 баллов, и ближайшие этапы.{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="page-head">
+    <p class="kicker-dark">Подбор от вуза</p>
+    <h1>Куда хочешь поступить?</h1>
+    <p class="muted">Выбери вуз, потом направление — покажем олимпиады сезона {{ current_year }}, которые туда ведут: где БВИ, где 100 баллов, какой уровень и когда ближайший этап.</p>
+  </div>
+  <div class="unis big">
+    {% for u, n in rows %}
+    <a href="/route/{{ uni_slug[u.university] }}"><b>{{ u.university }}</b>
+      <span>{% if n %}{{ plural(n, 'программа', 'программы', 'программ') }}{% else %}льготы общие для всех программ{% endif %}</span></a>
+    {% endfor %}
+  </div>
+  <div style="height:48px"></div>
+  {{ closing() }}
+</div>
+{% endblock %}

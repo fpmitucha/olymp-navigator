@@ -37,6 +37,21 @@ class Settings:
     # Прокси для Telegram, если провайдер его замедляет: http://user:pass@host:port или socks5://host:port
     telegram_proxy: str = os.environ.get("TELEGRAM_PROXY", "")
     # Ходить в Telegram только по IPv4: у многих провайдеров IPv6-маршрут до Telegram «висит»
+    # Telegram id администратора: ему приходят находки слежения за вузами (узнать id — у @userinfobot)
+    # Секрет для защиты форм сайта (любая длинная случайная строка); пусто — новый при каждом запуске
+    web_secret: str = os.environ.get("WEB_SECRET", "")
+    bot_admin_id: int = int(os.environ.get("BOT_ADMIN_ID", "0") or 0)
+    # Адрес сайта для ссылок в сообщениях бота: https://bvishechka.ru или https://<IP>; пусто — без ссылок
+    site_url: str = os.environ.get("SITE_URL", "").rstrip("/")
+    # Ключ шифрования логинов и паролей клиентов (Fernet); server-setup.sh создаёт его сам. Сменишь — старые не прочитать
+    crm_key: str = os.environ.get("CRM_KEY", "")
+    # Telegram-канал для новостей (@bvishechka_news или -100…); бот должен быть админом канала. Пусто — без канала
+    news_channel: str = os.environ.get("NEWS_CHANNEL", "")
+    # Подтверждение сайта в Яндекс.Вебмастере и Google Search Console (код из meta-тега)
+    yandex_verification: str = os.environ.get("YANDEX_VERIFICATION", "")
+    google_verification: str = os.environ.get("GOOGLE_VERIFICATION", "")
+    # Публиковать автоматические новости (регистрация, даты) без проверки куратором
+    news_autopublish: bool = os.environ.get("NEWS_AUTOPUBLISH", "0").strip().lower() in ("1", "true", "yes")
     telegram_force_ipv4: bool = os.environ.get("TELEGRAM_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no")
     # Раз в сутки забирать даты этапов с olimpiada.ru, пока работает бот
     stages_autosync: bool = os.environ.get("STAGES_AUTOSYNC", "1").strip().lower() not in ("0", "false", "no")

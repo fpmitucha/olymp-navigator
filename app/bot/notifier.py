@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
@@ -60,20 +61,35 @@ STAGES_SYNC_EVERY = timedelta(hours=20)
 STAGES_SYNC_KEY = "stages_synced_at"
 
 
-async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: float = 60 * 60) -> None:
-    """Раз в сутки забирает даты этапов с olimpiada.ru. Синхронизация идёт в отдельном потоке
-    со своим подключением к базе, чтобы бот продолжал отвечать."""
+STAGES_SYNC_REQUEST = "stages_sync_request"   # куратор нажал «Обновить даты сейчас»
+STAGES_SYNC_STATE = "stages_sync_state"       # что сейчас с синхронизацией — показываем в админке
+
+
+async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: float = 5 * 60) -> None:
+    """Раз в сутки (или по кнопке в админке) забирает даты этапов с olimpiada.ru. Синхронизация идёт
+    в отдельном потоке со своим подключением к базе, чтобы бот продолжал отвечать."""
     from app.stages_sync import sync_stages
+
+    def stamp() -> str:
+        return moscow_now().strftime("%d.%m %H:%M")
 
     def run_sync() -> str:
         storage = Storage(db_path)
         try:
             last = storage.get_meta(STAGES_SYNC_KEY)
+            forced = bool(storage.get_meta(STAGES_SYNC_REQUEST))
             now = datetime.now(timezone.utc)
-            if last and now - datetime.fromisoformat(last) < STAGES_SYNC_EVERY:
+            if not forced and last and now - datetime.fromisoformat(last) < STAGES_SYNC_EVERY:
                 return ""
-            report = sync_stages(catalog, storage, fetch, moscow_now().date())
+            storage.set_meta(STAGES_SYNC_REQUEST, "")
+            storage.set_meta(STAGES_SYNC_STATE, f"идёт с {stamp()} (первый раз — до часа)")
+            try:
+                report = sync_stages(catalog, storage, fetch, moscow_now().date())
+            except Exception as exc:
+                storage.set_meta(STAGES_SYNC_STATE, f"ошибка {stamp()}: {exc}"[:300])
+                raise
             storage.set_meta(STAGES_SYNC_KEY, now.isoformat(timespec="seconds"))
+            storage.set_meta(STAGES_SYNC_STATE, f"готово {stamp()}: {report.summary()}"[:300])
             return report.summary()
         finally:
             storage.close()
@@ -83,7 +99,7 @@ async def stages_sync_loop(catalog: Catalog, db_path: str, fetch, check_every: f
             summary = await asyncio.to_thread(run_sync)
             if summary:
                 log.info("Даты этапов обновлены с olimpiada.ru: %s", summary)
-        except Exception:  # noqa: BLE001 — сайт может быть недоступен, попробуем через час
+        except Exception:  # noqa: BLE001 — сайт может быть недоступен, попробуем позже
             log.exception("Не удалось обновить даты этапов с olimpiada.ru")
         await asyncio.sleep(check_every)
 
@@ -179,4 +195,321 @@ async def reminder_loop(storage: Storage, catalog: Catalog, send: SendFn, interv
                     log.info("Сообщения о новых датах: %s", result)
             except Exception:  # noqa: BLE001 — цикл не должен падать
                 log.exception("Сбой рассылки напоминаний")
+        await asyncio.sleep(interval)
+
+
+BENEFITS_WATCH_EVERY = timedelta(hours=6)
+BENEFITS_WATCH_KEY = "benefits_watched_at"
+
+
+async def benefits_watch_loop(db_path: str, sources_path, admission_year: int, send: SendFn,
+                              admin_id: int = 0, check_every: float = 30 * 60) -> None:
+    """Раз в 6 часов (днём) проверяет страницы приёма вузов; находки — подписчикам вуза и администратору."""
+    from app.benefits_watch import load_sources, run_watch
+    from app.fetch import fetch_bytes, fetch_html
+
+    def check():
+        storage = Storage(db_path)
+        try:
+            last = storage.get_meta(BENEFITS_WATCH_KEY)
+            now = datetime.now(timezone.utc)
+            if last and now - datetime.fromisoformat(last) < BENEFITS_WATCH_EVERY:
+                return None, {}
+            report = run_watch(storage, load_sources(sources_path), admission_year, fetch_html, fetch_bytes)
+            storage.set_meta(BENEFITS_WATCH_KEY, now.isoformat(timespec="seconds"))
+            by_uni: dict[str, list] = {}
+            for f in report.findings:
+                by_uni.setdefault(f.university, []).append(f)
+            return report, {u: (fs, storage.university_subscribers(u)) for u, fs in by_uni.items()}
+        finally:
+            storage.close()
+
+    while True:
+        if not is_quiet_time(moscow_now()):
+            try:
+                report, per_uni = await asyncio.to_thread(check)
+                if report is not None:
+                    if report.errors:
+                        log.info("Слежение за вузами: не открылись %s", "; ".join(report.errors))
+                    for university, (findings, users) in per_uni.items():
+                        log.info("Слежение за вузами: %s — %s", university, [f.url for f in findings])
+                        text = texts.benefits_published(university, findings, admission_year)
+                        for telegram_id in dict.fromkeys(([admin_id] if admin_id else []) + users):
+                            try:
+                                await send(telegram_id, text)
+                            except Exception:  # noqa: BLE001 — одному не дошло, остальным отправим
+                                log.exception("Не отправилось сообщение о документах %s пользователю %s",
+                                              university, telegram_id)
+                            await asyncio.sleep(SEND_PAUSE)
+            except Exception:  # noqa: BLE001
+                log.exception("Сбой слежения за вузами")
+        await asyncio.sleep(check_every)
+
+
+BENEFITS_SNAPSHOT_PREFIX = "benefits_snapshot:"
+
+
+def benefits_updates(storage: Storage, benefits) -> list[tuple]:
+    """Вузы, чьи льготы изменились с прошлого запуска бота: (вуз, прошлая подпись, прошлый снимок).
+    При первом запуске только запоминаем — сообщать не о чем."""
+    from app.benefits_diff import dump_snapshot
+
+    changed = []
+    for u in benefits.latest():
+        key = BENEFITS_SNAPSHOT_PREFIX + u.university
+        label = f"{u.admission_year}:{u.document_status}"
+        current = dump_snapshot(u.rules)
+        stored = storage.get_meta(key)
+        if stored is None:
+            storage.set_meta(key, json.dumps({"label": label, "snapshot": current}, ensure_ascii=False))
+            continue
+        previous = json.loads(stored)
+        if previous["snapshot"] != current or previous["label"] != label:
+            changed.append((u, previous["label"], previous["snapshot"]))
+    return changed
+
+
+async def send_benefits_updates(storage: Storage, catalog: Catalog, benefits, send: SendFn,
+                                admin_id: int = 0, pause: float = SEND_PAUSE) -> int:
+    """Подписчикам вуза — что изменилось в льготах (по их олимпиадам — в первую очередь)."""
+    from app.benefits_diff import diff, load_snapshot, snapshot
+
+    sent = 0
+    for u, old_label, old_snapshot in benefits_updates(storage, benefits):
+        old_rows, names = load_snapshot(old_snapshot)
+        names.update({r.olympiad.id: r.olympiad.name for r in u.rules})
+        changes = diff(old_rows, snapshot(u.rules), names)
+        users = storage.university_subscribers(u.university)
+        for telegram_id in dict.fromkeys(([admin_id] if admin_id else []) + users):
+            focus = {catalog.canonical_id(o) for o in storage.subscriptions(telegram_id)}
+            text = texts.benefits_changed(u, old_label, changes, focus)
+            try:
+                await send(telegram_id, text)
+                sent += 1
+            except UserBlocked:
+                storage.deactivate_user(telegram_id)
+            except Exception:  # noqa: BLE001
+                log.exception("Не отправилось сообщение об изменениях льгот %s пользователю %s",
+                              u.university, telegram_id)
+            if pause:
+                await asyncio.sleep(pause)
+        from app.benefits_diff import dump_snapshot
+
+        storage.set_meta(BENEFITS_SNAPSHOT_PREFIX + u.university, json.dumps(
+            {"label": f"{u.admission_year}:{u.document_status}", "snapshot": dump_snapshot(u.rules)},
+            ensure_ascii=False))
+        log.info("Льготы %s изменились (%s изменений) — сообщено %s подписчикам", u.university, len(changes),
+                 len(users))
+    return sent
+
+
+async def benefits_updates_loop(storage: Storage, catalog: Catalog, benefits, send: SendFn,
+                                admin_id: int = 0, interval: float = 15 * 60) -> None:
+    """При запуске бота сравнивает льготы с прошлым запуском; ночью ждёт утра."""
+    while is_quiet_time(moscow_now()):
+        await asyncio.sleep(interval)
+    try:
+        await send_benefits_updates(storage, catalog, benefits, send, admin_id)
+    except Exception:  # noqa: BLE001
+        log.exception("Сбой рассылки об изменениях льгот")
+
+
+# -- заявки на сопровождение ------------------------------------------------------
+
+def about_user(storage: Storage, catalog: Catalog, telegram_id: int | None) -> list[str]:
+    """Что известно о человеке из «Моего пути»: класс, дипломы, вузы-цели, олимпиады."""
+    if not telegram_id:
+        return []
+    lines = []
+    info = storage.user_info(telegram_id)
+    if info.get("phone"):
+        lines.append(f"Телефон: {info['phone']}")
+    profile = storage.profile(telegram_id)
+    if profile.get("grade"):
+        lines.append(f"Класс (в кабинете): {profile['grade']}")
+    diplomas = storage.diplomas(telegram_id)
+    if diplomas:
+        lines.append("<b>Дипломы:</b>")
+        for d in diplomas:
+            o = catalog.get(d["olympiad_id"])
+            name = texts.short_name(o.name, 50) if o else d["olympiad_id"]
+            lines.append(f"• {texts.escape(name)}, {texts.escape(d['profile'])} — "
+                         f"{texts.DIPLOMA_TITLES.get(d['diploma'], d['diploma'])}, {d['academic_year']}")
+    targets = storage.university_subscriptions(telegram_id)
+    if targets:
+        lines.append("<b>Вузы-цели:</b> " + texts.escape(", ".join(targets)))
+    olympiads = [catalog.get(x) for x in storage.subscriptions(telegram_id)]
+    names = [texts.short_name(o.name, 40) for o in olympiads if o]
+    if names:
+        lines.append("<b>Следит за:</b> " + texts.escape(", ".join(names[:10]))
+                     + (f" и ещё {len(names) - 10}" if len(names) > 10 else ""))
+    return lines
+
+
+async def forward_help_requests(storage: Storage, catalog: Catalog, send: SendFn, admin_id: int) -> int:
+    """Пересылает администратору новые заявки (с сайта и из бота). Возвращает число пересланных."""
+    if not admin_id:
+        return 0
+    sent = 0
+    for req in storage.pending_help_requests():
+        try:
+            await send(admin_id, texts.help_request_admin(req, about_user(storage, catalog, req["telegram_id"])))
+            sent += 1
+        except TemporaryError:
+            break  # сеть — попробуем в следующий проход
+        except Exception:  # noqa: BLE001 — сломанная заявка не должна блокировать остальные
+            log.exception("Не переслалась заявка на сопровождение #%s", req["id"])
+        storage.mark_help_forwarded(req["id"])
+        await asyncio.sleep(SEND_PAUSE)
+    return sent
+
+
+async def help_requests_loop(db_path: str, catalog: Catalog, send: SendFn, admin_id: int,
+                             interval: float = 60) -> None:
+    """Заявки с сайта попадают в общую базу — раз в минуту пересылаем новые администратору."""
+    if not admin_id:
+        log.warning("BOT_ADMIN_ID не задан — заявки на сопровождение и сообщения об ошибках копятся в базе")
+        return
+    while True:
+        storage = Storage(db_path)
+        try:
+            await forward_help_requests(storage, catalog, send, admin_id)
+        except Exception:  # noqa: BLE001
+            log.exception("Сбой пересылки заявок на сопровождение")
+        finally:
+            storage.close()
+        await asyncio.sleep(interval)
+
+
+async def send_outbox(storage: Storage, send: SendFn) -> int:
+    """Отправляет сообщения, которые сайт положил в очередь (сопровождение: статусы, сообщения куратора)."""
+    sent = 0
+    for msg in storage.pending_messages():
+        try:
+            await send(msg["telegram_id"], msg["text"])
+            sent += 1
+        except TemporaryError:
+            break  # сеть — повторим в следующий проход
+        except UserBlocked:
+            storage.deactivate_user(msg["telegram_id"])
+        except Exception:  # noqa: BLE001 — одно сломанное сообщение не держит очередь
+            log.exception("Не отправилось сообщение #%s из очереди", msg["id"])
+        storage.mark_message_sent(msg["id"])
+        await asyncio.sleep(SEND_PAUSE)
+    return sent
+
+
+def crm_housekeeping(storage: Storage, catalog: Catalog, today: date, site_url: str = "") -> int:
+    """Напоминания клиентам ввести доступ к кабинету олимпиады (в очередь сообщений, без повторов)
+    и удаление доступов прошлого сезона 1 июля. Возвращает число новых напоминаний."""
+    from app import crm
+
+    queued = 0
+    for row_id, telegram_id, kind, text in crm.access_reminders(catalog, storage.crm_all_olympiads(), storage.stages,
+                                                                today, site_url):
+        if not storage.crm_reminder_sent(row_id, kind):
+            storage.queue_message(telegram_id, text)
+            queued += 1
+    if (today.month, today.day) >= (7, 1):
+        removed = storage.crm_purge_accesses(f"{today.year}-07-01")
+        if removed:
+            log.info("Удалено доступов прошлого сезона: %s", removed)
+    return queued
+
+
+AUTO_NEWS = ("registration_open", "registration_closing", "stage_dates")
+
+
+def news_housekeeping(storage: Storage, catalog: Catalog, benefits, today: date, autopublish: bool = False,
+                      check_links: bool = True) -> int:
+    """Черновики новостей из этапов олимпиад (и подборка по понедельникам). Возвращает число новых."""
+    from app import news
+
+    since = storage.get_meta("news_since")
+    if not since:
+        since = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        storage.set_meta("news_since", since)
+    stages = storage.stages()
+    drafts = news.generate(catalog, benefits, stages, today, since)
+    digest = news.weekly_digest(catalog, benefits, stages, today)
+    if digest:
+        drafts.append(digest)
+    added = 0
+    checked: dict[str, bool] = {}
+    for d in drafts:
+        status = "published" if autopublish and d.kind in AUTO_NEWS else "draft"
+        sources = []
+        if d.source_url and check_links:
+            if d.source_url not in checked:
+                checked[d.source_url] = news.check_url(d.source_url)
+            if checked[d.source_url]:
+                sources = [{"url": d.source_url, "title": "Официальный сайт олимпиады", "ok": True}]
+        if storage.add_news(kind=d.kind, title=d.title, body=d.body, dedupe_key=d.key, olympiad_id=d.olympiad_id,
+                            profile=d.profile, source_url=sources[0]["url"] if sources else None,
+                            event_date=d.event_date, status=status,
+                            category=news.KIND_CATEGORY.get(d.kind, "stages"),
+                            sources=json.dumps(sources, ensure_ascii=False)):
+            added += 1
+    return added
+
+
+async def post_news(storage: Storage, send: SendFn, channel: str, site_url: str = "") -> int:
+    """Опубликованные новости → Telegram-канал. Старше двух суток не постим (канал подключили позже)."""
+    from app import news
+
+    if not channel:
+        return 0
+    posted = 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
+    for item in storage.news_to_post():
+        if (item["published_at"] or "") < cutoff:
+            storage.mark_news_posted(item["id"])
+            continue
+        try:
+            await send(channel, news.channel_text(item, site_url))  # type: ignore[arg-type]
+        except TemporaryError:
+            break
+        except Exception:  # noqa: BLE001 — например, бот не админ канала: не блокируем очередь
+            log.exception("Не опубликовалась новость #%s в канале %s", item["id"], channel)
+        storage.mark_news_posted(item["id"])
+        posted += 1
+        await asyncio.sleep(SEND_PAUSE)
+    return posted
+
+
+def _housekeeping(db_path: str, catalog: Catalog, benefits, site_url: str, autopublish: bool) -> None:
+    storage = Storage(db_path)
+    try:
+        today = moscow_now().date()
+        crm_housekeeping(storage, catalog, today, site_url)
+        if benefits is not None:
+            news_housekeeping(storage, catalog, benefits, today, autopublish)
+    except Exception:  # noqa: BLE001
+        log.exception("Сбой напоминаний сопровождения или новостей")
+    finally:
+        storage.close()
+
+
+async def outbox_loop(db_path: str, send: SendFn, catalog: Catalog | None = None, site_url: str = "",
+                      benefits=None, news_channel: str = "", news_autopublish: bool = False,
+                      interval: float = 20, housekeeping_every: float = 60 * 60) -> None:
+    """Сайт и бот — разные процессы с общей базой: раз в 20 секунд забираем очередь сообщений и
+    новости для канала, раз в час — напоминания сопровождения и черновики новостей
+    (в тихие часы не шлём, отложим до утра)."""
+    last = 0.0
+    while True:
+        storage = Storage(db_path)
+        try:
+            now = asyncio.get_running_loop().time()
+            if catalog is not None and now - last >= housekeeping_every and not is_quiet_time(moscow_now()):
+                last = now
+                # тяжёлый проход (все этапы × льготы вузов) — в отдельном потоке, чтобы бот не «зависал»
+                await asyncio.to_thread(_housekeeping, db_path, catalog, benefits, site_url, news_autopublish)
+            await send_outbox(storage, send)
+            if not is_quiet_time(moscow_now()):
+                await post_news(storage, send, news_channel, site_url)
+        except Exception:  # noqa: BLE001
+            log.exception("Сбой отправки очереди сообщений")
+        finally:
+            storage.close()
         await asyncio.sleep(interval)

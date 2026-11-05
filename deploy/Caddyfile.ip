@@ -1,0 +1,17 @@
+# Сайт по IP-адресу с настоящим сертификатом Let's Encrypt (без домена).
+# Let's Encrypt выдаёт сертификаты на IP только короткие (≈6 дней, профиль shortlived) — Caddy продлевает их сам.
+# Браузер не передаёт имя сервера (SNI), когда открывают адрес по IP, а Caddy в Docker видит свой
+# внутренний адрес, а не внешний — без default_sni он не знает, какой сертификат отдать, и HTTPS обрывается.
+{
+	default_sni {$SERVER_IP}
+}
+
+https://{$SERVER_IP} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	encode gzip
+	reverse_proxy web:8000
+}

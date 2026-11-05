@@ -186,5 +186,18 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.stages_by_activity()[5755], before)  # этапы не удалены
 
 
+    def test_removed_page_is_not_an_error(self):
+        from app.fetch import PageGone
+
+        self.sync()
+        original = self.site.fetch
+        self.site.fetch = lambda url: (_ for _ in ()).throw(PageGone("404")) \
+            if url.endswith("/activity/5755") else original(url)
+        report = self.sync()
+        self.assertEqual(report.errors, [])
+        self.assertNotIn(5755, json.loads(self.storage.get_meta(META_RELEVANT)))  # больше не следим
+        self.assertNotIn(5755, self.stages_by_activity())  # этапы удалённой страницы убраны
+
+
 if __name__ == "__main__":
     unittest.main()

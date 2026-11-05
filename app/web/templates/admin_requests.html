@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Предложенные вузы · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin">← Клиенты</a>
+  <div class="adm-head"><div><h1>Предложенные вузы</h1><p class="muted">Каких вузов не хватает пользователям — сверху самые частые.</p></div></div>
+  {% for g in groups %}
+  <section class="adm-card">
+    <div class="rm-head"><h2>{{ g[0].university }} <span class="muted">· {{ g|length }}</span></h2>
+      <form method="post" action="/admin/requests/done"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="university" value="{{ g[0].university }}"><button class="btn small ghost" type="submit">Добавили / закрыть</button></form></div>
+    <ul class="adm-log">{% for r in g %}<li><span class="muted small">{{ r.created_at[:10] }}</span>{{ r.program or 'программа не указана' }}{% if r.contact %} · {{ r.contact }}{% endif %}</li>{% endfor %}</ul>
+  </section>
+  {% else %}
+  <p class="muted">Новых предложений нет.</p>
+  {% endfor %}
+</div>
+{% endblock %}

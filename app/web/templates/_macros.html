@@ -1,0 +1,139 @@
+{% macro badge(kind) -%}
+<span class="badge b-{{ kind }}">{{ {'bvi': 'БВИ', 'score100': '100 ЕГЭ', 'dvi100': '100 ДВИ'}[kind] }}</span>
+{%- endmacro %}
+
+{% macro plural(n, one, few, many) -%}
+{{ n }} {% if n % 10 == 1 and n % 100 != 11 %}{{ one }}{% elif n % 10 in [2,3,4] and n % 100 not in [12,13,14] %}{{ few }}{% else %}{{ many }}{% endif %}
+{%- endmacro %}
+
+{% macro status(u, admission_year) -%}
+<span class="status {% if u.admission_year < admission_year %}old{% endif %}">{{ u.status_label(admission_year) }}</span>
+{%- endmacro %}
+
+{% macro groups(list) -%}
+<ul class="groups">
+  {% for g in list %}
+  <li>
+    <div>{{ badge(g.benefit) }}</div>
+    <div><span class="who">{{ diplomas[g.diploma] }}:</span>
+      {% for p, n in g.profiles %}{{ p }}{% if n %} <span class="muted">({{ plural(n, 'программа', 'программы', 'программ') }})</span>{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}
+      {% if g.scores %}<span class="muted nowrap"> · ЕГЭ от {{ g.scores[0] }}{% if g.scores|length > 1 %}–{{ g.scores[-1] }}{% endif %}</span>{% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{%- endmacro %}
+
+{% macro follow(url, following, label_on, label_off) -%}
+{% if user %}
+<form class="inline" method="post" action="{{ url }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="action" value="{{ 'unfollow' if following else 'follow' }}">
+  <button class="btn small {{ 'following' if following else 'ghost' }}" type="submit">{{ label_on if following else label_off }}</button>
+</form>
+{% else %}
+<a class="btn small ghost" href="/login">{{ label_off }}</a>
+{% endif %}
+{%- endmacro %}
+
+{% macro days_left(d, today) -%}
+{% set n = (d - today).days %}{% if n <= 0 %}сегодня{% elif n == 1 %}завтра{% else %}через {{ plural(n, 'день', 'дня', 'дней') }}{% endif %}
+{%- endmacro %}
+
+{% macro closing() -%}
+<div class="panel closing">
+  <div>
+    <h2>Поможем пройти весь путь</h2>
+    <p>Подберём олимпиады под твой вуз и направление, напомним о регистрации и каждом этапе, подскажем, как готовиться, — вплоть до получения нужного диплома и поступления.</p>
+  </div>
+  <a class="btn gold" href="/help">Хочу сопровождение</a>
+</div>
+{%- endmacro %}
+
+{# Вуз + поиск по программам: печатаешь пару букв — под полем похожие программы этого вуза.
+   Работает одинаково во всех браузерах (option hidden в Safari не прячется). #}
+{% macro program_picker(uni_programs, first_label='', required=False, custom=False) -%}
+<div class="pp" data-programs="{{ uni_programs|tojson|forceescape }}" data-custom="{{ '1' if custom else '' }}">
+  <select class="field pp-uni" name="university" aria-label="Вуз" {% if required %}required{% endif %}>
+    {% if first_label %}<option value="">{{ first_label }}</option>{% endif %}
+    {% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}
+  </select>
+  <div class="pp-box">
+    <input class="field pp-q" type="search" autocomplete="off" placeholder="Любая программа — или начни вводить название, код"
+           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Программа"
+           autocorrect="off" autocapitalize="off" spellcheck="false">
+    <input type="hidden" name="program" value="">
+    <ul class="pp-list" role="listbox" hidden></ul>
+    <p class="pp-hint small form-error" hidden>Подходит несколько программ — выбери одну из списка или очисти поле («любая»).</p>
+  </div>
+</div>
+<script>
+(() => {
+  if (window.ppInit) { window.ppInit(); return; }
+  const norm = (s) => s.toLowerCase().replace(/ё/g, 'е');
+  window.ppInit = () => document.querySelectorAll('.pp:not([data-ready])').forEach((root) => {
+    root.dataset.ready = '1';
+    const data = JSON.parse(root.dataset.programs);
+    const uni = root.querySelector('.pp-uni'), q = root.querySelector('.pp-q');
+    const hidden = root.querySelector('input[name=program]'), list = root.querySelector('.pp-list');
+    const hint = root.querySelector('.pp-hint');
+    const custom = root.dataset.custom === '1';
+    let items = [], active = -1;
+    const matches = () => {
+      const words = norm(q.value).split(/\s+/).filter(Boolean);
+      return (data[uni.value] || []).filter(([, label]) => words.every((w) => norm(label).includes(w)));
+    };
+    const close = () => { list.hidden = true; q.setAttribute('aria-expanded', 'false'); active = -1; };
+    const pick = ([value, label]) => { hidden.value = value; q.value = label; hint.hidden = true; close(); };
+    const render = () => {
+      items = matches().slice(0, 50);
+      list.replaceChildren(...items.map((it, i) => {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = it[1];
+        if (i === active) li.className = 'on';
+        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick(it); });
+        return li;
+      }));
+      const text = q.value.trim();
+      if (!items.length && text && uni.value && custom) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.className = 'own';
+        li.textContent = `Своя программа: «${text}»`;
+        li.addEventListener('mousedown', (e) => { e.preventDefault(); pick([text, text]); });
+        list.append(li);
+      }
+      if (!items.length) {
+        const li = document.createElement('li');
+        li.className = 'none';
+        li.textContent = !uni.value ? 'Сначала выбери вуз'
+          : (data[uni.value] || []).length ? 'В документе вуза такой программы нет'
+          : 'В документе вуза льготы общие для всех программ — впиши название или оставь «любая»';
+        list.append(li);
+      }
+      list.hidden = false; q.setAttribute('aria-expanded', 'true');
+    };
+    q.addEventListener('input', () => { hidden.value = ''; active = -1; render(); });
+    q.addEventListener('focus', render);
+    q.addEventListener('blur', close);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault(); if (list.hidden) render();
+        active = Math.max(0, Math.min(items.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1))); render();
+      } else if (e.key === 'Enter' && !list.hidden && items[active]) { e.preventDefault(); pick(items[active]); }
+      else if (e.key === 'Escape') close();
+    });
+    uni.addEventListener('change', () => { hidden.value = ''; q.value = ''; hint.hidden = true; });
+    root.closest('form').addEventListener('submit', (e) => {
+      if (!q.value.trim() || hidden.value) return;
+      const found = matches();
+      if (found.length === 1) { pick(found[0]); return; }
+      if (!found.length && custom) { hidden.value = q.value.trim(); return; }
+      e.preventDefault(); hint.hidden = false; q.focus();
+    });
+  });
+  window.ppInit();
+})();
+</script>
+{%- endmacro %}

@@ -1,0 +1,5 @@
+# HTTPS-сертификат Caddy получит сам (Let's Encrypt), как только домен смотрит на сервер.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:8000
+}

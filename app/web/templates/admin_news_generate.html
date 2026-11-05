@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% from "_macros.html" import program_picker %}
+{% block title %}Генератор новостей · Админка{% endblock %}
+{% block head %}<meta name="robots" content="noindex">{% endblock %}
+{% block main %}
+<div class="wrap adm">
+  <a class="small muted" href="/admin/news">← Новости</a>
+  <div class="adm-head"><div>
+    <h1>Генератор новостей</h1>
+    <p class="muted">Выбери тип и настройки — получится черновик, его можно поправить и опубликовать. Ссылки на официальные сайты и документы проверяются: в новость попадают только рабочие.</p>
+  </div></div>
+  {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+  <div class="adm-alert gen-stages">
+    <span><b>Даты этапов в базе:</b> {{ summary.upcoming }} предстоящих у {{ stage_info|length }} олимпиад{% if synced_at %} · обновлено с olimpiada.ru {{ synced_at|replace('T', ' ') }} UTC{% else %} · с olimpiada.ru ещё не загружались{% endif %}{% if sync_state %} · {{ sync_state }}{% endif %}</span>
+    <span class="adm-inline">
+      <form method="post" action="/admin/stages/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="back" value="/admin/news/generate"><button class="btn small" type="submit" {% if requested %}disabled{% endif %}>{{ 'Обновление запрошено' if requested else 'Обновить даты сейчас' }}</button></form>
+      <a class="btn small ghost" href="/admin/stages">Даты этапов</a>
+    </span>
+  </div>
+
+  <form method="post" action="/admin/news/generate" class="gen">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+
+    <fieldset class="adm-card gen-modes">
+      <legend>Что пишем</legend>
+      <label class="gen-mode"><input type="radio" name="mode" value="stages" checked> <b>Этапы и регистрации</b><span>по выбранным олимпиадам: регистрация, отборочные, финал — с датами</span></label>
+      <label class="gen-mode"><input type="radio" name="mode" value="digest"> <b>Подборка за период</b><span>все олимпиады со льготами (фильтры: уровень, профиль, вузы)</span></label>
+      <label class="gen-mode"><input type="radio" name="mode" value="benefits"> <b>Льготы вуза</b><span>какие олимпиады дают БВИ и 100 баллов в вузе / на программе</span></label>
+      <div class="gen-mode info">
+        <b>Информационная статья</b><span>шаблон или пустой лист — сразу в редактор:</span>
+        <div class="adm-inline">{% for t in templates %}<a class="chip" href="/admin/news/new?template={{ loop.index0 }}">{{ t }}</a>{% endfor %}<a class="chip add" href="/admin/news/new">Пустая статья</a></div>
+      </div>
+    </fieldset>
+
+    <div class="gen-grid">
+      <fieldset class="adm-card" data-for="stages benefits">
+        <legend>Олимпиады</legend>
+        <div class="adm-inline">
+          <input class="field" type="search" placeholder="Фильтр по названию" aria-label="Фильтр олимпиад" oninput="const q = this.value.toLowerCase(); for (const l of document.querySelectorAll('.gen-olymp label')) l.hidden = !l.textContent.toLowerCase().includes(q)">
+          <label class="small check"><input type="checkbox" onchange="for (const l of document.querySelectorAll('.gen-olymp label')) l.classList.toggle('nodates-hidden', this.checked && l.textContent.includes('нет дат'))"> только с датами</label>
+        </div>
+        <div class="gen-olymp">
+          {% for o in olympiads %}{% set info = stage_info.get(o.id) %}<label><input type="checkbox" name="olympiads" value="{{ o.id }}"> <span>{{ short(o) }}{% set lv = level_of(o) %}{% if lv %} <span class="muted small">· {{ lv }} ур.</span>{% endif %} {% if info %}<span class="ok small">· этапов {{ info[0] }}, ближайший {{ info[1].strftime('%d.%m') }}</span>{% else %}<span class="muted small">· нет дат</span>{% endif %}</span></label>{% endfor %}
+        </div>
+        <p class="small muted">Для «Льгот вуза» — необязательно: пусто значит все олимпиады вуза.</p>
+      </fieldset>
+
+      <div>
+        <fieldset class="adm-card" data-for="stages digest">
+          <legend>Период и этапы</legend>
+          <div class="adm-inline">
+            <label class="small">С <input class="field" type="date" name="start" value="{{ start.isoformat() }}"></label>
+            <label class="small">По <input class="field" type="date" name="end" value="{{ end.isoformat() }}"></label>
+          </div>
+          <div class="gen-checks" data-for="stages">
+            <label><input type="checkbox" name="kinds" value="registration" checked> регистрация</label>
+            <label><input type="checkbox" name="kinds" value="qualifying" checked> отборочные</label>
+            <label><input type="checkbox" name="kinds" value="final" checked> заключительный</label>
+          </div>
+          <div class="gen-checks" data-for="stages">
+            <label><input type="radio" name="combined" value="0" checked> отдельная новость на каждую олимпиаду</label>
+            <label><input type="radio" name="combined" value="1"> одна общая новость</label>
+          </div>
+          <label class="small" data-for="digest">Уровень олимпиады
+            <select class="field" name="level"><option value="0">любой</option><option value="1">I</option><option value="2">II</option><option value="3">III</option></select></label>
+          <p class="small muted">Даты берутся из этапов, загруженных ботом; если дат в периоде нет — новость не соберётся.</p>
+        </fieldset>
+
+        <fieldset class="adm-card" data-for="stages digest">
+          <legend>Профили (необязательно)</legend>
+          <select class="field" name="profiles" multiple size="6" aria-label="Профили">{% for p in profiles %}<option>{{ p }}</option>{% endfor %}</select>
+          <p class="small muted">Зажми Ctrl/⌘, чтобы выбрать несколько.</p>
+        </fieldset>
+
+        <fieldset class="adm-card" data-for="benefits">
+          <legend>Вуз и программа</legend>
+          {{ program_picker(uni_programs) }}
+        </fieldset>
+
+        <fieldset class="adm-card">
+          <legend>Подача</legend>
+          <label class="check"><input type="radio" name="style" value="calm" checked> <span><b>Спокойно</b> — факты и даты</span></label>
+          <label class="check"><input type="radio" name="style" value="hook"> <span><b>Цепляюще</b> — срочность и выгода в заголовке: «закрывается завтра», «БВИ в 12 вузах»</span></label>
+          <p class="small muted">Цепляющий стиль строится только на реальных датах и льготах из базы — без выдуманных цифр.</p>
+        </fieldset>
+
+        <fieldset class="adm-card">
+          <legend>Что добавить в текст</legend>
+          <label class="check"><input type="checkbox" name="with_benefits" value="1" checked> строку «льготы в вузах»</label>
+          <div class="adm-inline">
+            <label class="small">Диплом <select class="field" name="diploma"><option value="prize">призёр</option><option value="winner">победитель</option></select></label>
+            <label class="small">Класс <select class="field" name="grade"><option>11</option><option>10</option><option>9</option></select></label>
+          </div>
+          <label class="small">Льготы только в этих вузах (пусто — все)
+            <select class="field" name="universities" multiple size="5">{% for uni in uni_programs %}<option>{{ uni }}</option>{% endfor %}</select></label>
+          <p class="small" style="margin:10px 0 4px"><b>Призыв в конце</b></p>
+          {% for key, text in cta.items() %}<label class="check small"><input type="checkbox" name="cta" value="{{ key }}" {% if key == 'bot' %}checked{% endif %}> {{ text }}</label>{% endfor %}
+        </fieldset>
+      </div>
+    </div>
+    <button class="btn" type="submit">Собрать черновик</button>
+    <span class="small muted">&nbsp;Проверка ссылок может занять до 10 секунд.</span>
+  </form>
+</div>
+<script>
+  // показываем только настройки выбранного типа
+  const form = document.querySelector('.gen');
+  function sync() {
+    const mode = form.mode.value;
+    for (const el of form.querySelectorAll('[data-for]')) el.hidden = !el.dataset.for.split(' ').includes(mode);
+  }
+  for (const r of form.querySelectorAll('[name=mode]')) r.addEventListener('change', sync);
+  sync();
+</script>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, status, closing, follow with context %}
+{% block title %}{{ name }} — льготы в {{ u.university }} · Бвишечка{% endblock %}
+{% block description %}Какие льготы даёт «{{ o.name }}» при поступлении в {{ u.full_name }}: БВИ, 100 баллов, программы и условия по ЕГЭ.{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="page-head">
+    <p class="crumbs"><a href="/olympiad/{{ o.id }}">{{ name }}</a> → <a href="/university/{{ uni_slug[u.university] }}">{{ u.university }}</a></p>
+    <h1>{{ name }} в {{ u.university }}</h1>
+    <p class="muted">{{ u.full_name }} · {{ status(u, admission_year) }}</p>
+  </div>
+  {% if u.admission_year < admission_year %}<p class="note">Вуз ещё не опубликовал особые права на приём {{ admission_year }} — ниже данные прошлого года.</p>{% endif %}
+  <table class="rules">
+    <thead><tr><th>Льгота</th><th>Кому</th><th>Условия</th><th>Направления и программы</th></tr></thead>
+    <tbody>
+    {% for r in rules %}
+    <tr>
+      <td>{{ badge(r.benefit) }}</td>
+      <td><b>{{ diplomas[r.diploma] }}</b>{% if r.profiles %}<br>{{ r.profiles|join(', ') }}{% endif %}{% if levels_label(r.levels) %}<br>{{ levels_label(r.levels) }}{% endif %}{% if r.grades %}<br>за {{ r.grades|join(' или ') }} класс{% endif %}</td>
+      <td class="cond">{% if r.confirm_min_score %}ЕГЭ от <b>{{ r.confirm_min_score }}</b>: {{ r.confirm_subject or 'предмет профиля' }}{% elif o.is_vsosh %}без условия по ЕГЭ{% endif %}
+        {% if r.score_for %}<br>100 баллов: {{ r.score_for }}{% endif %}
+        {% if r.diploma_since %}<br>диплом не раньше {{ r.diploma_since }} года{% endif %}
+        {% if r.note %}<br><span class="muted">{{ r.note }}</span>{% endif %}</td>
+      <td class="programs">{% if r.programs %}{{ r.programs|join('; ') }}{% else %}<span class="muted">направления по профилю олимпиады</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small" style="margin:16px 0 40px">Источник: <a href="{{ u.source_url }}" rel="nofollow noopener">{{ u.source_title or u.source_url }}</a>, проверено {{ u.checked_at.strftime('%d.%m.%Y') }}.</p>
+  {{ closing() }}
+</div>
+{% endblock %}

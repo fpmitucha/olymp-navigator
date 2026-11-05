@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title }} · Бвишечка{% endblock %}
+{% block description %}{{ item.body[:160] }}{% endblock %}
+{% block og %}
+<meta property="og:type" content="article">
+<meta property="og:title" content="{{ item.title }}">
+<meta property="og:description" content="{{ item.body[:200] }}">
+{% endblock %}
+{% block head %}
+<script type="application/ld+json">{{ {"@context": "https://schema.org", "@type": "NewsArticle", "headline": item.title[:110],
+  "datePublished": item.published_at or item.created_at, "dateModified": item.published_at or item.created_at,
+  "description": item.body[:200], "image": [base_url ~ "/assets/og.png"], "mainEntityOfPage": base_url ~ request.url.path,
+  "author": {"@type": "Organization", "name": "Бвишечка", "url": base_url},
+  "publisher": {"@type": "Organization", "name": "Бвишечка", "logo": {"@type": "ImageObject", "url": base_url ~ "/assets/icon-512.png"}}}|tojson }}</script>
+{% endblock %}
+{% block main %}
+<div class="wrap news-page">
+  <a class="small muted" href="/news">← Все новости</a>
+  <article class="news-article">
+    <p class="news-meta">{{ item.date }}{% if item.category_label %} · <a href="/news?category={{ item.category }}">{{ item.category_label }}</a>{% endif %}{% if item.status != 'published' %} · <b>черновик</b>{% endif %}</p>
+    <h1>{{ item.title }}</h1>
+    {% for para in item.body.split('\n\n') %}<p>{% for line in para.split('\n') %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>{% endfor %}
+    <div class="news-actions">
+      {% if item.olympiad %}<a class="btn" href="/olympiad/{{ item.olympiad.id }}{% if item.profile and ',' not in item.profile %}?profile={{ item.profile|urlencode }}{% endif %}">Олимпиада и льготы в вузах</a>{% endif %}
+    </div>
+    {% if item.sources_list %}
+    <div class="news-sources">
+      <h2>Источники</h2>
+      <ul>{% for x in item.sources_list %}<li><a href="{{ x.url }}" rel="noopener" target="_blank">{{ x.title }}</a> <span class="muted small">{{ x.url.split('//')[-1].split('/')[0] }}</span></li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </article>
+  <div class="panel closing" style="margin-top:36px">
+    <div><h2>Не пропусти регистрацию</h2><p>Бот напомнит о регистрации и каждом этапе олимпиад, за которыми ты следишь.</p></div>
+    <a class="btn gold" href="{{ bot_url }}">Открыть бота</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+# Сайт на домене (bvishechka.com) + www и старый адрес по IP переадресуются на домен.
+# Нужны DOMAIN и SERVER_IP в .env. Сертификаты Let's Encrypt Caddy получает и продлевает сам.
+{
+	default_sni {$SERVER_IP}
+}
+
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:8000
+}
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}
+
+# старые ссылки https://<IP>/… (в том числе отправленные клиентам) ведут на домен
+https://{$SERVER_IP} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	redir https://{$DOMAIN}{uri} permanent
+}

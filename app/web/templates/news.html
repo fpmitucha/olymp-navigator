@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Новости олимпиад: регистрации и этапы · Бвишечка{% endblock %}
+{% block description %}Открылась регистрация, даты отборочных и заключительных этапов олимпиад — и какие льготы дают их дипломы в вузах.{% endblock %}
+{% block head %}<link rel="alternate" type="application/rss+xml" title="Бвишечка — новости" href="/news/rss.xml">{% endblock %}
+{% block main %}
+<div class="wrap news-page">
+  <div class="page-head">
+    <h1>Новости олимпиад</h1>
+    <p class="muted">Регистрации, даты этапов и льготы в вузах — коротко и со ссылкой на источник.</p>
+    <div class="news-tabs">
+      <a class="chip {{ 'on' if not mine and not category }}" href="/news">Все</a>
+      {% for key, label in categories.items() %}<a class="chip {{ 'on' if category == key }}" href="/news?category={{ key }}">{{ label }}</a>{% endfor %}
+      {% if user %}<a class="chip {{ 'on' if mine }}" href="/news?mine=1">По моим олимпиадам</a>{% endif %}
+    </div>
+  </div>
+  <ul class="news-list">
+    {% for n in items %}
+    <li>
+      <span class="news-meta">{{ n.date }}{% if n.category_label %} · {{ n.category_label }}{% endif %}</span>
+      <a class="title" href="/news/{{ n.id }}-{{ n.slug }}">{{ n.title }}</a>
+      <p>{{ n.body.split('\n')[0][:220] }}{% if n.body|length > 220 %}…{% endif %}</p>
+    </li>
+    {% else %}
+    <li class="muted">{% if mine %}По олимпиадам, за которыми ты следишь, новостей пока нет.{% else %}В этом разделе пока пусто — скоро появятся.{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <div class="pager">
+    {% if page > 1 %}<a class="btn small ghost" href="/news?page={{ page - 1 }}{% if mine %}&mine=1{% endif %}{% if category %}&category={{ category }}{% endif %}">← Новее</a>{% endif %}
+    {% if has_next %}<a class="btn small ghost" href="/news?page={{ page + 1 }}{% if mine %}&mine=1{% endif %}{% if category %}&category={{ category }}{% endif %}">Старше →</a>{% endif %}
+  </div>
+</div>
+{% endblock %}
