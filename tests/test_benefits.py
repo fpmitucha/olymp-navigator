@@ -214,3 +214,14 @@ class ProgramCatalogTest(unittest.TestCase):
         data["rules"][0]["programs"] = ["01.03.02 Прикладной анализ данных"]    # программа другого вуза
         names = program_names(BenefitsCatalog([parse_file(data, sample_catalog(), "t.json")]))
         self.assertEqual(program_label("01.03.02", names), "01.03.02 Прикладная математика и информатика")
+
+    def test_finuniversity_programs_by_group(self):
+        from app.routes import covers, program_groups, program_label
+
+        self.assertIn("группа программ 1", program_groups("Политология"))
+        self.assertEqual(program_label("Психология", {}), "Психология · группы 3, 4, 8")
+        data = university()
+        data["rules"][0]["programs"] = ["группа программ 8"]
+        rule = parse_file(data, sample_catalog(), "t.json").rules[0]
+        self.assertTrue(covers(rule, "Психология"))
+        self.assertFalse(covers(rule, "Политология"))

@@ -80,18 +80,46 @@ def university_programs(u: UniversityBenefits) -> list[str]:
                 codes_here = set(CODE.findall(p)) - codes
                 found |= codes_here
                 codes |= codes_here
+    grouped = _catalog_groups().get(u.university)
     for p in program_catalog().get(u.university, []):
         m = CODE.match(p)
         if m and m.group() not in codes:
             found.add(p)
             codes.add(m.group())
+        elif grouped and p in grouped:
+            found.add(p)               # программа вуза, у которого льготы заданы по группам программ
+    if grouped:                        # вместо «группа программ 3» — сами программы с подписью групп
+        found = {p for p in found if p not in {g for gs in grouped.values() for g in gs}}
     return sorted(found, key=lambda p: (CODE.match(p) is None, p))
+
+
+@lru_cache(maxsize=1)
+def _catalog_groups() -> dict[str, dict[str, list[str]]]:
+    """Вуз → программа → её «группы программ» (как у Финуниверситета) из catalog.json."""
+    try:
+        data = json.loads(_CATALOG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return {uni: dict(v["groups"]) for uni, v in data.items()
+            if not uni.startswith("_") and isinstance(v, dict) and v.get("groups")}
+
+
+def program_groups(program: str) -> list[str]:
+    """Группы программ, в которые входит программа («Политология» → «группа программ 1», …)."""
+    for groups in _catalog_groups().values():
+        if program in groups:
+            return groups[program]
+    return []
 
 
 def program_label(program: str, names: dict[str, str]) -> str:
     """Голый код («38.03.01», как у МИФИ) дополняем названием; «группа программ 3» — пояснением."""
     if CODE.fullmatch(program) and program in names:
         return f"{program} {names[program]}"
+    groups = program_groups(program)
+    if groups:
+        nums = ", ".join(g.rsplit(" ", 1)[-1] for g in groups)
+        return f"{program} · {'группы' if len(groups) > 1 else 'группа'} {nums}"
     return program_labels().get(program, program)
 
 
@@ -110,6 +138,8 @@ def covers(rule: Rule, program: str) -> bool:
     if not program or not rule.programs:
         return True
     if program in rule.programs:
+        return True
+    if any(g in rule.programs for g in program_groups(program)):   # правило на группу, куда входит программа
         return True
     code = CODE.match(program)
     for p in rule.programs:
