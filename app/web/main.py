@@ -338,6 +338,9 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
             notes=[plain(n) for n in not_in_list_banner(o, all_rules, admission_year) if plain(n)],
         )
 
+    pdf_cache: dict[tuple, bytes] = {}
+    pdf_gate = threading.BoundedSemaphore(2)
+
     @app.get("/olympiad/{olympiad_id}/pdf")
     def olympiad_pdf(olympiad_id: str, profile: str = "", diploma: str = "", grade: int = 0, year: str = ""):
         from app.bot.texts import PRIZE_BVI_WARNING, not_in_list_banner, prize_bvi_affected
@@ -361,7 +364,17 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
         rules = [r for _, rs in entries for r in rs]
         notes = ([PRIZE_BVI_WARNING] if prize_bvi_affected(rules) else []) + not_in_list_banner(
             o, rules, admission_year)
-        data = benefits_pdf(o, entries, admission_year, subtitle=subtitle, notes=notes, today=today())
+        # PDF собирается тяжело: роботы, обходящие все профили подряд, клали сайт. Кэшируем готовые
+        # файлы и собираем не больше двух одновременно, остальные ждут.
+        key = (o.id, profile, diploma, grade, year, today())
+        data = pdf_cache.get(key)
+        if data is None:
+            with pdf_gate:
+                data = pdf_cache.get(key) or benefits_pdf(o, entries, admission_year, subtitle=subtitle,
+                                                          notes=notes, today=today())
+            pdf_cache[key] = data
+            while len(pdf_cache) > 300:
+                pdf_cache.pop(next(iter(pdf_cache)))
         return Response(data, media_type="application/pdf", headers={
             "Content-Disposition": f'attachment; filename="{pdf_filename(o, slug(profile))}"'})
 
@@ -1562,7 +1575,7 @@ self.addEventListener('fetch', e => {
     def robots(request: Request):
         base = site_url or str(request.base_url).rstrip("/")
         text = ("User-agent: *\nDisallow: /admin\nDisallow: /me\nDisallow: /login\nDisallow: /r/\n"
-                "Disallow: /api/\nDisallow: /help?sent\nDisallow: /*?utm_\nAllow: /\n\n"
+                "Disallow: /api/\nDisallow: /help?sent\nDisallow: /*?utm_\nDisallow: /olympiad/*/pdf\nAllow: /\n\n"
                 f"Sitemap: {base}/sitemap.xml\n")
         return Response(text, media_type="text/plain")
 
