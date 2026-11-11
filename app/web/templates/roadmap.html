@@ -5,7 +5,7 @@
 {% macro access_form(it) %}
 <form class="rm-access-form" method="post" action="/me/roadmap/{{ it.row_id }}/access">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <label>Логин или e-mail от кабинета олимпиады<input class="field" name="login" autocomplete="off" maxlength="200" required></label>
+  <label>Логин или e-mail, с которым ты зарегистрировался на олимпиаду<input class="field" name="login" autocomplete="off" maxlength="200" required></label>
   <label>Пароль<input class="field" type="password" name="password" autocomplete="new-password" maxlength="200" required></label>
   <p class="rm-warn">Не вводи пароли от Госуслуг, почты, Яндекс ID и VK ID — только от кабинета самой олимпиады. Если олимпиада входит через них, напиши куратору.</p>
   <ul class="rm-safe">
@@ -45,6 +45,18 @@
     {% endif %}
   </section>
 
+  {% if not shared and access_enabled and rm.items|selectattr('needs_access')|rejectattr('access', 'in', ['pending', 'ok'])|list %}
+  <section class="rm-reg" aria-label="Как зарегистрироваться">
+    <h2>Регистрируешься на олимпиады ты сам</h2>
+    <p>Куратор подбирает олимпиады, следит за сроками и этапами, но зарегистрироваться на сайте олимпиады нужно тебе — это личный кабинет участника.</p>
+    <ol class="rm-howto">
+      <li>Открой сайт олимпиады — ссылка «Сайт олимпиады ↗» у каждой олимпиады ниже.</li>
+      <li>Зарегистрируйся и выбери профиль, как в твоём плане.</li>
+      <li>Нажми «Я зарегистрировался — ввести логин и пароль» у этой олимпиады.</li>
+    </ol>
+  </section>
+  {% endif %}
+
   <section class="rm-stats" aria-label="Прогресс">
     <div class="done"><p>Сделано</p><b>{{ plural(rm.done, 'шаг', 'шага', 'шагов') }}</b></div>
     <div class="now"><p>В работе</p><b>{{ plural(rm.now, 'шаг', 'шага', 'шагов') }}</b></div>
@@ -75,7 +87,9 @@
       {% for it in rm.items %}
       <article class="rm-item" id="o{{ it.row_id }}">
         <div class="rm-item-head">
-          <div><h3>{{ short(it.olympiad) }}</h3>{% if it.profile %}<p class="muted small">{{ it.profile }}</p>{% endif %}</div>
+          {% set url = olympiad_url(it.olympiad) %}
+          <div><h3>{{ short(it.olympiad) }}</h3>{% if it.profile %}<p class="muted small">{{ it.profile }}</p>{% endif %}
+            {% if url %}<a class="small rm-site" href="{{ url }}" target="_blank" rel="noopener">Сайт олимпиады ↗</a>{% endif %}</div>
           <span class="rm-status {{ it.tone }}">{{ it.label }}</span>
         </div>
         <ol class="rm-steps">
@@ -103,10 +117,16 @@
             </form>
           </div>
           {% else %}
-          <p><b>{% if it.access == 'bad' %}Логин или пароль не подошли — введи заново{% else %}Нужен доступ к кабинету олимпиады{% endif %}</b>{% if it.access_deadline %} · до {{ it.access_deadline.strftime('%d.%m') }}{% endif %}</p>
-          <p class="small muted">Куратор зарегистрирует тебя и будет следить за этапами в кабинете.</p>
+          <p><b>{% if it.access == 'bad' %}Логин или пароль не подошли — введи заново{% else %}Зарегистрируйся и дай доступ к кабинету{% endif %}</b>{% if it.access_deadline %} · до {{ it.access_deadline.strftime('%d.%m') }}{% endif %}</p>
+          {% if it.access != 'bad' %}
+          <ol class="rm-howto">
+            <li><b>Зарегистрируйся сам</b> {% if url %}на <a href="{{ url }}" target="_blank" rel="noopener">сайте олимпиады ↗</a>{% else %}на сайте олимпиады{% endif %} — куратор за тебя этого не делает.</li>
+            <li>Запиши логин и пароль от личного кабинета олимпиады.</li>
+            <li>Введи их здесь — куратор проверит регистрацию и будет следить за этапами.</li>
+          </ol>
+          {% endif %}
           <details {% if access_error == it.row_id|string %}open{% endif %}>
-            <summary class="btn small">Ввести логин и пароль</summary>
+            <summary class="btn small">Я зарегистрировался — ввести логин и пароль</summary>
             {% if access_error == it.row_id|string %}<p class="form-error">Заполни логин и пароль и отметь согласие.</p>{% endif %}
             {{ access_form(it) }}
           </details>

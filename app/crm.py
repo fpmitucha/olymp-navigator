@@ -414,7 +414,29 @@ def _link(site_url: str) -> str:
     return f'\n\n<a href="{escape(site_url)}/me/roadmap">Открыть роадмап</a>' if site_url else ""
 
 
-def status_message(o_name: str, profile: str, status: str, n: int = 1, site_url: str = "") -> str:
+_NOT_OFFICIAL = ("olimpiada.ru", "vk.com", "t.me")
+
+
+def olympiad_url(o: CatalogOlympiad | None) -> str:
+    """Официальный сайт олимпиады из перечня РСОШ (не агрегатор) — туда клиент идёт регистрироваться."""
+    for u in (o.websites if o else []):
+        host = u.split("//", 1)[-1].split("/", 1)[0].lower().removeprefix("www.")
+        if host and not any(host == x or host.endswith("." + x) for x in _NOT_OFFICIAL):
+            return u
+    return ""
+
+
+def how_to_register(url: str = "") -> str:
+    """Что делать клиенту: регистрируется он сам, а нам даёт доступ к кабинету (HTML для Telegram)."""
+    site = f'<a href="{escape(url, quote=True)}">на сайте олимпиады</a>' if url else "на сайте олимпиады"
+    return ("\n\n<b>Что сделать:</b>\n"
+            f"1. Зарегистрируйся сам {site} — куратор за тебя этого не делает.\n"
+            "2. Запиши логин и пароль от личного кабинета олимпиады.\n"
+            "3. Введи их в «Сопровождении» на сайте — куратор проверит регистрацию и будет следить за этапами.")
+
+
+def status_message(o_name: str, profile: str, status: str, n: int = 1, site_url: str = "",
+                   olympiad_link: str = "") -> str:
     """Текст уведомления клиенту о смене статуса (HTML для Telegram)."""
     s = normalize_status(status, n)
     m = _QF.fullmatch(s)
@@ -428,12 +450,14 @@ def status_message(o_name: str, profile: str, status: str, n: int = 1, site_url:
     else:
         head = "Начался отборочный этап"
     name = escape(o_name) + (f", {escape(profile)}" if profile else "")
-    return f"<b>{head}</b>\n{name} — {escape(status_label(s, n).lower())}." + _link(site_url)
+    extra = how_to_register(olympiad_link) if s == "registration" else ""
+    return f"<b>{head}</b>\n{name} — {escape(status_label(s, n).lower())}." + extra + _link(site_url)
 
 
 def access_message(o_name: str, ok: bool, site_url: str = "") -> str:
     if ok:
-        return f"<b>Доступ проверен</b>\nВход в кабинет «{escape(o_name)}» работает — дальше мы всё сделаем сами."
+        return (f"<b>Доступ проверен</b>\nВход в кабинет «{escape(o_name)}» работает — куратор видит твою "
+                "регистрацию и будет следить за этапами. Задания олимпиады решаешь ты сам(а).")
     return (f"<b>Доступ не подошёл</b>\nНе получилось войти в кабинет «{escape(o_name)}». "
             "Проверь логин и пароль и введи их заново." + _link(site_url))
 
@@ -464,8 +488,8 @@ def registration_openings(catalog: Catalog, rows: list[dict], stages_for, today:
             name = o.name if len(o.name) < 60 else o.name[:57] + "…"
             name += f", {r['profile']}" if r["profile"] else ""
             until = f" до {end:%d.%m}" if end else ""
-            text = (f"<b>Открылась регистрация</b>\n«{escape(name)}» — регистрация идёт{until}. "
-                    "Куратор подскажет, что сделать." + _link(site_url))
+            text = (f"<b>Открылась регистрация</b>\n«{escape(name)}» — регистрация идёт{until}."
+                    + how_to_register(olympiad_url(o)) + _link(site_url))
             out.append((r["id"], r["telegram_id"], f"reg_open:{start.isoformat()}", text))
             break
     return out
@@ -492,7 +516,8 @@ def access_reminders(catalog: Catalog, rows: list[dict], stages_for, today: date
             continue
         when = {3: "через 3 дня", 1: "завтра", 0: "сегодня"}[days]
         name = o.name if len(o.name) < 60 else o.name[:57] + "…"
-        text = (f"<b>Нужен доступ к кабинету олимпиады</b>\n«{escape(name)}»: введи логин и пароль от кабинета "
-                f"{when} ({due:%d.%m}) — регистрация закрывается {deadline:%d.%m}." + _link(site_url))
+        text = (f"<b>Зарегистрируйся на олимпиаду</b>\n«{escape(name)}»: регистрация закрывается {deadline:%d.%m}. "
+                f"Зарегистрируйся и введи логин и пароль от кабинета {when} ({due:%d.%m})."
+                + how_to_register(olympiad_url(o)) + _link(site_url))
         out.append((r["id"], r["telegram_id"], kind, text))
     return out

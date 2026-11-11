@@ -427,6 +427,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
     from app.routes import RouteItem, program_label, program_names, route as build_route, university_programs
 
     names = program_names(benefits)
+    from app.crm import olympiad_url as _olympiad_url
+    templates.env.globals["olympiad_url"] = _olympiad_url
     templates.env.filters["plabel"] = lambda p: program_label(p, names) if p else p
 
     @app.get("/route", response_class=HTMLResponse)
@@ -988,7 +990,10 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                 s.crm_log(user, f"{name}: {label}")
                 changed.append((name, label))
             if changed:
-                notify(s, user, crm.bulk_status_message(changed, site_url))
+                text = crm.bulk_status_message(changed, site_url)
+                if crm.normalize_status(status, 1) == "registration":
+                    text += crm.how_to_register()
+                notify(s, user, text)
         return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
 
     @app.post("/admin/client/{code}/olympiads/bulk")
@@ -1033,7 +1038,8 @@ def create_app(catalog: Catalog, benefits: BenefitsCatalog, *, storage_path: Pat
                 o = catalog.get(row["olympiad_id"])
                 name = short(o) if o else row["olympiad_id"]
                 s.crm_log(user, f"{name}: {crm.status_label(row['status'], n)} → {crm.status_label(status, n)}")
-                notify(s, user, crm.status_message(name, row["profile"], status, n, site_url))
+                notify(s, user, crm.status_message(name, row["profile"], status, n, site_url,
+                                                   olympiad_link=crm.olympiad_url(o)))
         return RedirectResponse(f"/admin/client/{code}#olympiads", status_code=303)
 
     @app.post("/admin/client/{code}/olympiads/{row_id}/deadline")

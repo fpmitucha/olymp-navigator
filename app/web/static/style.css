@@ -649,3 +649,10 @@ details.more[open] summary { display: none; }
 .chip-check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #e6e6ea;
   border-radius: 999px; font-size: 14px; cursor: pointer; }
 .chip-check:has(input:checked) { background: #f7efdc; border-color: #c0952d; }
+
+/* регистрация на олимпиаду — делает сам клиент */
+.rm-reg { padding: 18px 20px; border-radius: 18px; background: #f7efdc; display: grid; gap: 8px; }
+.rm-reg h2 { margin: 0; }
+.rm-reg p { margin: 0; }
+.rm-howto { margin: 6px 0 10px; padding-left: 20px; display: grid; gap: 4px; }
+.rm-site { display: inline-block; margin-top: 4px; }

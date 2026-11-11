@@ -72,6 +72,7 @@
               <tr>
                 <td class="bs-col"><input type="checkbox" name="row" value="{{ it.row_id }}" form="bulk-status" aria-label="Отметить: {{ short(it.olympiad) }}{% if it.profile %}, {{ it.profile }}{% endif %}"></td>
                 <td><a class="strong" href="/olympiad/{{ it.olympiad.id }}">{{ short(it.olympiad) }}</a>{% if it.profile %}<div class="muted small">{{ it.profile }}</div>{% endif %}
+                  {% set url = olympiad_url(it.olympiad) %}{% if url %}<a class="small" href="{{ url }}" target="_blank" rel="noopener">сайт ↗</a>{% endif %}
                   <form method="post" action="{{ base }}/olympiads/{{ it.row_id }}/delete" onsubmit="return confirm('Убрать олимпиаду из плана?')">
                     <input type="hidden" name="csrf" value="{{ csrf }}">
                     <button class="linkbtn small" type="submit">Убрать</button>

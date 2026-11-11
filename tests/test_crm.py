@@ -142,7 +142,9 @@ class RoadmapTest(unittest.TestCase):
         crm_housekeeping(self.s, self.catalog, date(2026, 11, 11))                           # без повторов
         texts = [m["text"] for m in self.s.pending_messages()]
         self.assertEqual(sum("Открылась регистрация" in x for x in texts), 1)
-        self.assertIn("до 30.11", next(x for x in texts if "Открылась" in x))
+        opened = next(x for x in texts if "Открылась" in x)
+        self.assertIn("до 30.11", opened)
+        self.assertIn("Зарегистрируйся сам", opened)
         self.assertEqual(self.s.crm_olympiads(5)[0]["status"], "registration")
         self.assertEqual(crm_housekeeping(self.s, self.catalog, date(2026, 12, 5)), 0)       # закрылась — молчим
 
@@ -309,7 +311,10 @@ class CrmWebTest(unittest.TestCase):
                                      data={"csrf": ccsrf, "status": "winner"}).status_code, 404)
         # клиент вводит доступ к кабинету олимпиады
         post(f"{base}/olympiads/{row['id']}/status", status="registration")
-        self.assertIn("Ввести логин и пароль", client.get("/me/roadmap").text)
+        page = client.get("/me/roadmap").text
+        self.assertIn("ввести логин и пароль", page)
+        self.assertIn("Зарегистрируйся сам", page)                       # регистрируется клиент, не куратор
+        self.assertIn("Сайт олимпиады ↗", page)
         bad = client.post(f"/me/roadmap/{row['id']}/access", data={"csrf": ccsrf, "login": "m@x.ru", "password": "p"},
                           follow_redirects=False)
         self.assertIn("access_error", bad.headers["location"])                # без согласия не берём
